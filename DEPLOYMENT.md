@@ -2,13 +2,12 @@
 
 ## Current deployment state
 
-- The existing Flask API is `https://fitiq-api-brlo.onrender.com`.
+- The Flask API is deployed at `https://fitiq-api-sgrc.onrender.com`.
 - The Render API service is configured on the Free plan in `render.yaml`.
-- The React website is not currently deployed. `frontend/.env.production` points the
-  production React build at the existing API; it does not publish the website.
-- Until a public website origin exists, the API CORS allowlist contains only the two
-  explicit Create React App development origins in `render.yaml`. It does not allow
-  `https://localhost` or arbitrary origins.
+- The React website is deployed to Vercel at `https://fitiq-web-ruddy.vercel.app`.
+- `frontend/.env.production` sets `REACT_APP_BACKEND_URL=https://fitiq-api-sgrc.onrender.com`.
+- CORS allows `https://fitiq-web-ruddy.vercel.app`, `http://localhost:3000`, and
+  `http://127.0.0.1:3000`.
 
 ## Deploy the existing React website
 
@@ -20,7 +19,7 @@ serve the built files without changing the React or Flask architecture:
 2. Set the root directory to `frontend`.
 3. Use `npm ci` as the build command and `build` as the publish directory. The
    `REACT_APP_BACKEND_URL` value is read at build time from `.env.production` and must
-   remain `https://fitiq-api-brlo.onrender.com`.
+   remain `https://fitiq-api-sgrc.onrender.com`.
 4. Add an SPA rewrite from `/*` to `/index.html` so direct visits and refreshes on React
    routes such as `/dashboard` are served by the React router.
 5. Record the exact HTTPS origin Render assigns to the published site. Do not guess or
@@ -69,7 +68,7 @@ development origin in `FITIQ_CORS_ORIGINS`. This is not a production website ori
 ## Smoke checks
 
 ```powershell
-Invoke-RestMethod "https://fitiq-api-brlo.onrender.com/health"
+Invoke-RestMethod "https://fitiq-api-sgrc.onrender.com/health"
 ```
 
 The expected health response is `status: ok`. After deployment, test all API routes and

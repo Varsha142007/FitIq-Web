@@ -8,6 +8,9 @@
     "captureInput": true
   },
   "plugins": {
+    "CapacitorHttp": {
+      "enabled": false
+    },
     "SplashScreen": {
       "launchAutoHide": true,
       "backgroundColor": "#FAF7F2",

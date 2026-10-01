@@ -11,4 +11,4 @@ services:
       - key: PYTHON_VERSION
         value: 3.13.7
       - key: FITIQ_CORS_ORIGINS
-        value: http://localhost:3000,http://127.0.0.1:3000
+        value: https://fitiq-web-ruddy.vercel.app,http://localhost:3000,http://127.0.0.1:3000,https://localhost,http://localhost,capacitor://localhost

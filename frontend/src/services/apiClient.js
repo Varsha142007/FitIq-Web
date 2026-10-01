@@ -1,7 +1,7 @@
 import axios from "axios";
 import BACKEND_URL from "../config/api";
 
-const API_TIMEOUT_MS = 20000;
+const API_TIMEOUT_MS = 60000;
 
 const getBackendUrl = (path) => {
   if (!BACKEND_URL) {

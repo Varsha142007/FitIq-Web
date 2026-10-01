@@ -1,4 +1,3 @@
-import profile
 import os
 import joblib
 import pandas as pd
@@ -15,7 +14,6 @@ from analytics.bodyAnalysis import (
     calculate_health_score
 )
 import sys
-import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "ml"))
 from engines.fis_engine import (
@@ -55,7 +53,7 @@ cors_origins = [
     origin.strip()
     for origin in os.environ.get(
         "FITIQ_CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
+        "http://localhost:3000,http://127.0.0.1:3000,https://localhost,http://localhost,capacitor://localhost",
     ).split(",")
     if origin.strip()
 ]
@@ -103,6 +101,19 @@ def body_analysis():
 
     ideal_min, ideal_max = ideal_weight_range(height)
 
+    # ================= HEALTH SCORE =================
+
+    health_score_input = {
+        "bmi": bmi,
+        "sleepHours": data.get("sleepHours", 7),
+        "waterIntake": data.get("waterIntake", 2),
+        "dailySteps": data.get("dailySteps", 5000),
+        "exerciseFrequency": data.get("exerciseFrequency", 3),
+        "stressLevel": data.get("stressLevel", 3),
+    }
+
+    health_score = calculate_health_score(health_score_input)
+
     # ================= RESPONSE =================
 
     return jsonify({
@@ -113,7 +124,8 @@ def body_analysis():
         "idealWeight": {
             "min": ideal_min,
             "max": ideal_max
-        }
+        },
+        "healthScore": health_score
     })
 
 @app.route("/fis", methods=["POST"])
