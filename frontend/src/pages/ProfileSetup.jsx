@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
 import { auth } from "../firebase/firebase";
-import axios from "axios";
 import {
   updateUserProfile,
   getUserProfile
 } from "../services/firestoreService";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import BACKEND_URL from "../config/api";
+import { postBackend } from "../services/apiClient";
 function ProfileSetup() {
 const navigate = useNavigate();
 const [searchParams] = useSearchParams();
@@ -130,8 +129,8 @@ useEffect(() => {
     }
 
     // New user: calculate body analysis
-    const response = await axios.post(
-      `${BACKEND_URL}/body-analysis`,
+    const response = await postBackend(
+      "/body-analysis",
       {
         age: Number(profile.age),
         gender: profile.gender,

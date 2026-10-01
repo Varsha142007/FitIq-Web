@@ -68,3 +68,35 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/d
 ### `npm run build` fails to minify
 
 This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+
+## Android (Capacitor)
+
+The Android app packages this existing React frontend; there is no second frontend. Capacitor's
+configuration is in `capacitor.config.json`, and the Android project is in `android/`.
+
+### Backend URL
+
+For a distributable Android APK, set `REACT_APP_BACKEND_URL` to the permanent HTTPS URL of the
+deployed Flask API before building. Do not use localhost, a private LAN address, or a temporary
+tunnel. The APK embeds this URL at build time.
+
+For deployment, replace the setting with the real deployed Flask HTTPS origin. The backend URL is
+embedded in the frontend at build time. No production URL is configured by this project.
+
+### Build a debug APK (Windows)
+
+From this `frontend` directory, with Android Studio/Android SDK installed and `ANDROID_HOME` or
+`ANDROID_SDK_ROOT` configured:
+
+```powershell
+$env:REACT_APP_BACKEND_URL = "https://<your-deployed-flask-backend>"
+npm run android:build
+```
+
+The Android build command rejects missing, non-HTTPS, localhost, and private-IP backend URLs.
+Replace the example with the real deployed service origin.
+
+The command builds React, syncs it into the Android project, and runs Gradle's `assembleDebug`.
+The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. To sync the latest web
+build without compiling an APK, run `npm run android:sync`. To open the native project in Android
+Studio, run `npm run android:open`.

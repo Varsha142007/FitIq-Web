@@ -101,17 +101,31 @@ function compareMetric(currentVal, prevVal, unit = "", isHigherBetter = true) {
  * Calculates deterministic FIS for a specific single check-in day
  * following the exact backend FIS weighting.
  */
-function calculateDayFis(record, profileBmi = 22.0) {
+function calculateDayFis(record, profileBmi) {
   if (!record) return null;
 
-  const steps = Number(record.steps) || 0;
+  const readMetric = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  const steps = readMetric(record.steps);
+  const exerciseMins = readMetric(record.exerciseMinutes);
+  const sleep = readMetric(record.sleepHours);
+  const water = readMetric(record.waterIntake);
+  const bmi = readMetric(profileBmi);
+
+  if ([steps, exerciseMins, sleep, water, bmi].some((value) => value === null)) {
+    return null;
+  }
+
   let stepScore = 20;
   if (steps >= 10000) stepScore = 100;
   else if (steps >= 7500) stepScore = 80;
   else if (steps >= 5000) stepScore = 60;
   else if (steps >= 3000) stepScore = 40;
 
-  const exerciseMins = Number(record.exerciseMinutes) || 0;
   const workout = Boolean(record.workoutCompleted);
   let exerciseScore = 20;
   if (workout || exerciseMins >= 60) exerciseScore = 100;
@@ -121,14 +135,12 @@ function calculateDayFis(record, profileBmi = 22.0) {
 
   const activityScore = stepScore * 0.6 + exerciseScore * 0.4;
 
-  const sleep = Number(record.sleepHours) || 0;
   let sleepScore = 20;
   if (sleep >= 7 && sleep <= 9) sleepScore = 100;
   else if (sleep >= 6) sleepScore = 75;
   else if (sleep >= 5) sleepScore = 50;
   else if (sleep > 9) sleepScore = 70;
 
-  const water = Number(record.waterIntake) || 0;
   let waterScore = 30;
   if (water >= 2.5) waterScore = 100;
   else if (water >= 2.0) waterScore = 85;
@@ -136,8 +148,8 @@ function calculateDayFis(record, profileBmi = 22.0) {
   else if (water >= 1.0) waterScore = 50;
 
   let bmiScore = 70;
-  if (profileBmi >= 18.5 && profileBmi <= 24.9) bmiScore = 100;
-  else if (profileBmi >= 25 && profileBmi < 30) bmiScore = 75;
+  if (bmi >= 18.5 && bmi <= 24.9) bmiScore = 100;
+  else if (bmi >= 25 && bmi < 30) bmiScore = 75;
   else bmiScore = 50;
 
   const dayFis = Math.round(
@@ -355,7 +367,7 @@ export default function Analytics({
 
   // 6. Historical FIS Trend Points across all filtered check-ins
   const fisTrendData = useMemo(() => {
-    const profileBmi = Number(profile?.bodyAnalysis?.bmi) || Number(profile?.bmi) || 22.0;
+    const profileBmi = profile?.bodyAnalysis?.bmi ?? profile?.bmi ?? null;
     return filteredCheckIns.map((record) => {
       const dayFis = calculateDayFis(record, profileBmi);
       return {
@@ -364,12 +376,12 @@ export default function Analytics({
         steps: record.steps,
         sleep: record.sleepHours
       };
-    });
+    }).filter((record) => record.fis !== null);
   }, [filteredCheckIns, profile]);
 
-  const currentFis = fisResult?.fis || (fisTrendData.length > 0 ? fisTrendData[fisTrendData.length - 1].fis : null);
+  const currentFis = fisResult?.fis ?? (fisTrendData.length > 0 ? fisTrendData[fisTrendData.length - 1].fis : null);
   const previousFis = actualDaysCount >= 2 && fisTrendData.length >= 2 ? fisTrendData[fisTrendData.length - 2].fis : null;
-  const fisDiff = currentFis && previousFis ? currentFis - previousFis : null;
+  const fisDiff = currentFis != null && previousFis != null ? currentFis - previousFis : null;
 
   const displayStreak = streak || profile?.streak || 0;
 
@@ -744,7 +756,9 @@ export default function Analytics({
                 <Utensils size={14} className="text-amber-500" /> Calories
               </span>
               <span className="text-[10px] text-slate-400 font-medium">
-                Target: {nutritionData?.targets?.calorie_target || 2000} kcal
+                Target: {nutritionData?.targets?.calorie_target != null
+                  ? `${nutritionData.targets.calorie_target} kcal`
+                  : "Not available"}
               </span>
             </div>
 
@@ -874,12 +888,12 @@ export default function Analytics({
                 Engine Component Breakdown
               </div>
               {[
-                { label: "Activity", score: fisResult?.fitnessActivity?.score ?? 75, color: "bg-emerald-500" },
-                { label: "Recovery", score: fisResult?.recovery?.score ?? 68, color: "bg-indigo-500" },
-                { label: "Nutrition", score: fisResult?.nutrition?.score ?? 70, color: "bg-amber-500" },
+                { label: "Activity", score: fisResult?.fitnessActivity?.score ?? null, color: "bg-emerald-500" },
+                { label: "Recovery", score: fisResult?.recovery?.score ?? null, color: "bg-indigo-500" },
+                { label: "Nutrition", score: fisResult?.nutrition?.score ?? null, color: "bg-amber-500" },
                 {
                   label: "Consistency",
-                  score: actualDaysCount < 3 ? null : fisResult?.consistency?.score ?? 60,
+                  score: actualDaysCount < 3 ? null : fisResult?.consistency?.score ?? null,
                   color: "bg-blue-500",
                   note: actualDaysCount < 3 ? "Building baseline" : null
                 }
@@ -889,14 +903,16 @@ export default function Analytics({
                   <div className="flex-1 mx-3 h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${c.color}`}
-                      style={{ width: `${c.score !== null ? Math.min(100, c.score) : 0}%` }}
+                      style={{ width: `${c.score != null ? Math.min(100, c.score) : 0}%` }}
                     />
                   </div>
                   <span className="font-bold text-slate-800 w-28 text-right font-mono text-[11px]">
-                    {c.note ? (
-                      <span className="text-slate-400 font-normal">{c.note}</span>
+                    {c.note || c.score == null ? (
+                      <span className="text-slate-400 font-normal">
+                        {c.note || "Building baseline"}
+                      </span>
                     ) : (
-                      `${Math.round(c.score || 0)} / 100`
+                      `${Math.round(c.score)} / 100`
                     )}
                   </span>
                 </div>
@@ -980,7 +996,7 @@ export default function Analytics({
             </div>
             {actualDaysCount >= 7 && periodAverages.steps !== null && (
               <span className="text-xs font-semibold text-slate-500">
-                7-day avg: <strong className="text-slate-800">{periodAverages.steps.toLocaleString()}</strong> steps
+                {timeFilter}-day avg: <strong className="text-slate-800">{periodAverages.steps.toLocaleString()}</strong> steps
               </span>
             )}
             {actualDaysCount < 7 && (
@@ -1057,7 +1073,7 @@ export default function Analytics({
             </div>
             {actualDaysCount >= 7 && periodAverages.sleep !== null && (
               <span className="text-xs font-semibold text-slate-500">
-                7-day avg: <strong className="text-slate-800">{periodAverages.sleep}</strong> hrs
+                {timeFilter}-day avg: <strong className="text-slate-800">{periodAverages.sleep}</strong> hrs
               </span>
             )}
             {actualDaysCount < 7 && (
@@ -1098,7 +1114,9 @@ export default function Analytics({
             <div className="p-3 bg-slate-50 rounded-xl">
               <span className="text-slate-400 font-medium block mb-1">Recovery Score</span>
               <span className="text-base font-bold text-slate-900">
-                {fisResult?.recovery?.score ? `${Math.round(fisResult.recovery.score)} / 100` : "Calculated"}
+                {fisResult?.recovery?.score != null
+                  ? `${Math.round(fisResult.recovery.score)} / 100`
+                  : "Building baseline"}
               </span>
             </div>
           </div>
@@ -1150,7 +1168,9 @@ export default function Analytics({
               <div className="flex justify-between items-baseline mb-2">
                 <span className="text-xs font-bold text-slate-700">Daily Calories</span>
                 <span className="text-xs text-slate-500">
-                  Target: <strong>{nutritionData?.targets?.calorie_target || 2000} kcal</strong>
+                  Target: <strong>{nutritionData?.targets?.calorie_target != null
+                    ? `${nutritionData.targets.calorie_target} kcal`
+                    : "Not available"}</strong>
                 </span>
               </div>
 
@@ -1162,9 +1182,11 @@ export default function Analytics({
                 </span>
                 {currentRecord?.caloriesConsumed != null && (
                   <span className="text-xs text-slate-500">
-                    ({Math.round(
-                      (currentRecord.caloriesConsumed / (nutritionData?.targets?.calorie_target || 2000)) * 100
-                    )}% of target)
+                    {nutritionData?.targets?.calorie_target != null
+                      ? `(${Math.round(
+                          (currentRecord.caloriesConsumed / nutritionData.targets.calorie_target) * 100
+                        )}% of target)`
+                      : "(target unavailable)"}
                   </span>
                 )}
               </div>
@@ -1174,11 +1196,11 @@ export default function Analytics({
                   className="h-full bg-amber-500 rounded-full transition-all duration-300"
                   style={{
                     width: `${
-                      currentRecord?.caloriesConsumed != null
+                      currentRecord?.caloriesConsumed != null && nutritionData?.targets?.calorie_target != null
                         ? Math.min(
                             100,
                             Math.round(
-                              (currentRecord.caloriesConsumed / (nutritionData?.targets?.calorie_target || 2000)) *
+                                (currentRecord.caloriesConsumed / nutritionData.targets.calorie_target) *
                                 100
                             )
                           )
@@ -1337,11 +1359,11 @@ export default function Analytics({
                   ? "Building baseline"
                   : predictionResult?.predicted_future_bmi
                   ? Number(predictionResult.predicted_future_bmi).toFixed(2)
-                  : predictionResult?.predicted_bmi_change
+                  : predictionResult?.predicted_bmi_change != null
                   ? `${predictionResult.predicted_bmi_change > 0 ? "+" : ""}${Number(
                       predictionResult.predicted_bmi_change
                     ).toFixed(2)}`
-                  : "Stable"}
+                  : "Forecast unavailable"}
               </p>
             </div>
           </div>
@@ -1354,7 +1376,8 @@ export default function Analytics({
             </div>
             {actualDaysCount < 2 ? (
               <p>Log at least 2 check-ins to power your ML BMI progression forecast.</p>
-            ) : predictionResult?.predicted_bmi_change !== undefined ? (
+            ) : predictionResult?.predicted_bmi_change != null &&
+              Number.isFinite(Number(predictionResult.predicted_bmi_change)) ? (
               <p>
                 Based on your daily steps, sleep, and hydration habits, your BMI is forecasted to{" "}
                 <strong>
@@ -1418,11 +1441,11 @@ export default function Analytics({
             >
               {actualDaysCount === 1
                 ? "Baseline"
-                : anomalyResult?.insight?.type === "negative"
-                ? "Attention Flag"
-                : anomalyResult?.insight?.type === "positive"
-                ? "Positive Shift"
-                : "Normal"}
+                : actualDaysCount < 3
+                ? "Building baseline"
+                : anomalyResult?.status === "success"
+                ? "Analysis available"
+                : "Unavailable"}
             </span>
           </div>
 
@@ -1441,7 +1464,7 @@ export default function Analytics({
                         : "bg-white border border-slate-200"
                     }`}
                   >
-                    {(r.steps || 0).toLocaleString()}
+                    {r.steps != null ? r.steps.toLocaleString() : "Not recorded"}
                   </span>
                   {i < filteredCheckIns.slice(-5).length - 1 && <span className="text-slate-300">→</span>}
                 </React.Fragment>
@@ -1451,13 +1474,11 @@ export default function Analytics({
 
           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-600 leading-relaxed">
             {actualDaysCount === 1 ? (
-              "✓ Baseline established. Anomaly detection activates after 2+ check-ins to detect unusual shifts in your routine."
+              "Building baseline. Anomaly detection needs at least 3 check-ins to compare recent activity with your personal history."
             ) : anomalyResult?.insight?.message ? (
               anomalyResult.insight.message
-            ) : actualDaysCount >= 2 && Math.abs(stepsComparison.diff) >= 1500 ? (
-              `An activity shift of ${Math.abs(stepsComparison.diff).toLocaleString()} steps was detected between your latest check-ins.`
             ) : (
-              "✓ No unusual shifts detected in your daily metrics. Habits remain steady within normal variance."
+              "Anomaly analysis is unavailable. Your recorded check-ins remain available."
             )}
           </div>
         </div>
@@ -1486,22 +1507,22 @@ export default function Analytics({
           <div className="space-y-3">
             <CohortComparisonItem
               label="Daily Steps"
-              userVal={currentRecord?.steps || 0}
-              cohortVal={cohortResult?.comparisons?.steps?.cohort || 7500}
+              userVal={currentRecord?.steps ?? null}
+              cohortVal={cohortResult?.comparisons?.steps?.cohort ?? null}
               unit="steps"
               higherIsBetter={true}
             />
             <CohortComparisonItem
               label="Sleep Duration"
-              userVal={currentRecord?.sleepHours || 0}
-              cohortVal={cohortResult?.comparisons?.sleep?.cohort || 7.0}
+              userVal={currentRecord?.sleepHours ?? null}
+              cohortVal={cohortResult?.comparisons?.sleep?.cohort ?? null}
               unit="hrs"
               higherIsBetter={true}
             />
             <CohortComparisonItem
               label="Water Intake"
-              userVal={currentRecord?.waterIntake || 0}
-              cohortVal={cohortResult?.comparisons?.water?.cohort || 2.2}
+              userVal={currentRecord?.waterIntake ?? null}
+              cohortVal={cohortResult?.comparisons?.water?.cohort ?? null}
               unit="L"
               higherIsBetter={true}
             />

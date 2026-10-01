@@ -1,10 +1,9 @@
-import BACKEND_URL from "../config/api";
-const API_URL = BACKEND_URL;
+import { fetchBackend } from "./apiClient";
 
 export async function getConsistencyPrediction(trackingRecords) {
   try {
-    const response = await fetch(
-      `${API_URL}/consistency-prediction`,
+    const response = await fetchBackend(
+      "/consistency-prediction",
       {
         method: "POST",
         headers: {

@@ -1,53 +1,77 @@
-# FitIQ Flask Backend Deployment
+# FitIQ web production deployment
 
-The repository is prepared for a Render Blueprint deployment. The blueprint uses the repository
-root as its source so the Flask app can load the existing model and ML datasets from `ml/`.
-`render.yaml` selects Render's Standard web-service plan because the behavior analytics endpoint
-loads a large foundation dataset into memory. The plan is paid.
+## Current deployment state
 
-## Deploy on Render
+- The existing Flask API is `https://fitiq-api-brlo.onrender.com`.
+- The Render API service is configured on the Free plan in `render.yaml`.
+- The React website is not currently deployed. `frontend/.env.production` points the
+  production React build at the existing API; it does not publish the website.
+- Until a public website origin exists, the API CORS allowlist contains only the two
+  explicit Create React App development origins in `render.yaml`. It does not allow
+  `https://localhost` or arbitrary origins.
 
-1. Sign in to [Render](https://dashboard.render.com/).
-2. Choose **New +** > **Blueprint**.
-3. Connect the `Aditi142005/FitIQ` GitHub repository and select the branch containing these changes.
-4. Review the `fitiq-api` service in `render.yaml`, authorize the paid Standard plan, and deploy.
-5. In the service's **Environment** settings, add whichever server-only LLM secrets are configured:
-   - `GEMINI_API_KEY` (primary)
-   - `LLM_API_KEY` (alternate Gemini key name)
-   - `OPENAI_API_KEY` (fallback)
-6. Keep `FITIQ_CORS_ORIGINS` set to `https://localhost` for the Capacitor Android app. Add the exact
-   HTTPS origin as a comma-separated entry if a separately hosted web frontend also calls Flask.
-7. Wait for the Render service to report **Live**. Copy its assigned HTTPS hostname and verify:
+## Deploy the existing React website
 
-   ```powershell
-   Invoke-RestMethod "https://<render-service-host>/health"
-   ```
+The frontend is a Create React App project in `frontend/`. A Render Static Site can
+serve the built files without changing the React or Flask architecture:
 
-The health response should be `status: ok`. No permanent service URL exists until Render has
-created the service under an authorized account. Do not put API keys or Firebase service-account
-credentials into this repository or the APK.
+1. In Render, create a **Static Site** from the same repository and the branch intended
+   for production.
+2. Set the root directory to `frontend`.
+3. Use `npm ci` as the build command and `build` as the publish directory. The
+   `REACT_APP_BACKEND_URL` value is read at build time from `.env.production` and must
+   remain `https://fitiq-api-brlo.onrender.com`.
+4. Add an SPA rewrite from `/*` to `/index.html` so direct visits and refreshes on React
+   routes such as `/dashboard` are served by the React router.
+5. Record the exact HTTPS origin Render assigns to the published site. Do not guess or
+   substitute a hostname.
+6. Add that exact origin to `FITIQ_CORS_ORIGINS` in `render.yaml` and the Render API
+   service environment. Retain only explicitly approved development origins if needed;
+   do not use `*`.
+7. Deploy the API configuration and website, then verify the API endpoints and browser
+   preflight from the published website origin.
 
-## Runtime configuration
+No public frontend origin can be configured or production browser CORS verified before
+the static site has been created and Render has assigned its actual URL.
 
-- Render supplies `PORT`; Gunicorn binds to `0.0.0.0:$PORT`.
-- `FITIQ_CORS_ORIGINS` is a comma-separated allowlist; the blueprint defaults to `https://localhost`.
-- LLM API keys are optional. The existing interpretation endpoint uses its deterministic analytics
-  interpretation if no LLM key is configured.
-- The backend does not use Firebase Admin or a service account. Existing Firebase Authentication
-  and Firestore calls run in the React client using the existing Firebase web configuration and
-  Firestore security rules. Keep those rules restrictive; the Firebase web API key is a public
-  client identifier, not a server credential.
-- Model and dataset paths are relative to the checked-out source tree. The required model, meal
-  dataset, nutrition data, and analytics foundation CSV are tracked in Git.
+## Backend service
 
-## Build the Android APK after deployment
+The `fitiq-api` Render web service uses:
 
-Set the real Render HTTPS origin before building; React embeds the value into the APK at build time:
+- Plan: Free
+- Health check: `/health`
+- Start command: `gunicorn --chdir backend --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120 app:app`
+- CORS: comma-separated exact origins in `FITIQ_CORS_ORIGINS`
+
+Render supplies `PORT`. The backend reads optional LLM keys (`GEMINI_API_KEY`,
+`LLM_API_KEY`, or `OPENAI_API_KEY`) from server environment variables only. Never put
+these secrets in React environment variables, the repository, or a client build.
+
+Firebase Authentication and Firestore are used by the existing React client. The Flask
+backend does not use Firebase Admin credentials. Keep Firestore security rules scoped to
+the authenticated user's records.
+
+## Local web development against the production API
+
+From PowerShell:
 
 ```powershell
 Set-Location "C:\path\to\FitIQ\frontend"
-$env:REACT_APP_BACKEND_URL = "https://<render-service-host>"
-npm run android:build
+npm ci
+npm start
 ```
 
-Do not build or distribute the final APK with a local IP, localhost, or a placeholder hostname.
+The development server runs on `http://localhost:3000`; the backend URL is centralized
+in `src/config/api.js` and the production build setting remains in `.env.production`.
+For browser calls from local development, the Render API must allow the exact local
+development origin in `FITIQ_CORS_ORIGINS`. This is not a production website origin.
+
+## Smoke checks
+
+```powershell
+Invoke-RestMethod "https://fitiq-api-brlo.onrender.com/health"
+```
+
+The expected health response is `status: ok`. After deployment, test all API routes and
+browser CORS from the actual published website origin; successful local tests alone do
+not verify production operation.

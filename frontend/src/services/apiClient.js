@@ -28,7 +28,7 @@ export async function fetchBackend(path, options = {}) {
     }
 
     throw new Error(
-      `Could not reach the FitIQ backend at ${BACKEND_URL}. Check that Flask is running and the phone is on the same Wi-Fi network.`
+      "Unable to connect to FitIQ server. Please try again."
     );
   } finally {
     clearTimeout(timeoutId);
@@ -48,7 +48,7 @@ export async function postBackend(path, payload) {
     }
     if (!error.response) {
       throw new Error(
-        `Could not reach the FitIQ backend at ${BACKEND_URL}. Check that Flask is running and the phone is on the same Wi-Fi network.`
+        "Unable to connect to FitIQ server. Please try again."
       );
     }
     throw new Error(

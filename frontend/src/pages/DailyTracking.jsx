@@ -36,9 +36,12 @@ function DailyTracking() {
   const [nextAvailableDate, setNextAvailableDate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [statusError, setStatusError] = useState("");
   const expirationTimerRef = useRef(null);
 
   const checkStatus = async () => {
+    setLoading(true);
+    setStatusError("");
     try {
       const user = auth.currentUser;
 
@@ -90,6 +93,9 @@ function DailyTracking() {
       }
     } catch (error) {
       console.error("Unable to load 24-hour check-in status:", error);
+      setStatusError(
+        "We couldn't verify your check-in status. Retry before submitting to avoid a duplicate check-in."
+      );
     } finally {
       setLoading(false);
     }
@@ -127,6 +133,10 @@ function DailyTracking() {
 
   const handleSave = async () => {
     const user = auth.currentUser;
+
+    if (loading || statusError) {
+      return;
+    }
 
     if (!user) {
       alert("No user logged in.");
@@ -280,6 +290,19 @@ function DailyTracking() {
   return (
     <div>
       <h1 className="text-4xl font-bold mb-6">📅 Daily Tracking</h1>
+
+      {statusError && (
+        <div className="mb-6 max-w-xl mx-auto rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+          <p className="font-semibold">{statusError}</p>
+          <button
+            type="button"
+            onClick={checkStatus}
+            className="mt-3 rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* 24-Hour Cycle Status Banner */}
       <div className="mb-6 max-w-xl mx-auto">
@@ -446,7 +469,7 @@ function DailyTracking() {
 
         <button
           onClick={handleSave}
-          disabled={saving || isRecorded}
+          disabled={saving || loading || isRecorded || Boolean(statusError)}
           className={`w-full py-3.5 rounded-xl font-semibold transition shadow-sm ${
             isRecorded
               ? "bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300"

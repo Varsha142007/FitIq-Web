@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase/firebase";
 import {
@@ -8,7 +7,7 @@ import {
   addHealthHistory
 } from "../services/firestoreService";
 import { useLocation } from "react-router-dom";
-import BACKEND_URL from "../config/api";
+import { postBackend } from "../services/apiClient";
 function HealthAssessment() {
 const navigate = useNavigate();
   const [step,setStep] = useState(1);
@@ -404,8 +403,8 @@ if (!profile) {
   alert("Profile data not found.");
   return;
 }
-const analysisResponse = await axios.post(
-  `${BACKEND_URL}/body-analysis`,
+const analysisResponse = await postBackend(
+  "/body-analysis",
   {
     age: Number(profile.age),
     gender: profile.gender,

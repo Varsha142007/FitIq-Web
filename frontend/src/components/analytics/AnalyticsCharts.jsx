@@ -43,8 +43,12 @@ export function LineTrendChart({
   emptyMessage = "Need at least 2 check-ins for trend chart"
 }) {
   const [hoveredIdx, setHoveredIdx] = useState(null);
+  const chartData = (data || []).filter((item) => {
+    const value = Number(item?.[dataKey]);
+    return item?.[dataKey] != null && Number.isFinite(value);
+  });
 
-  if (!data || data.length === 0) {
+  if (chartData.length === 0) {
     return (
       <div
         className="flex items-center justify-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs py-10"
@@ -56,8 +60,8 @@ export function LineTrendChart({
   }
 
   // If only 1 data point, show single point visual
-  if (data.length === 1) {
-    const item = data[0];
+  if (chartData.length === 1) {
+    const item = chartData[0];
     const val = item[dataKey];
     return (
       <div
@@ -77,7 +81,7 @@ export function LineTrendChart({
     );
   }
 
-  const values = data.map((d) => (d[dataKey] != null ? Number(d[dataKey]) : 0));
+  const values = chartData.map((d) => Number(d[dataKey]));
   const rawMin = minVal !== null ? minVal : Math.min(...values);
   const rawMax = maxVal !== null ? maxVal : Math.max(...values, target || 0);
   
@@ -97,9 +101,9 @@ export function LineTrendChart({
   const plotWidth = svgWidth - padLeft - padRight;
   const plotHeight = svgHeight - padTop - padBottom;
 
-  const points = data.map((d, i) => {
-    const val = d[dataKey] != null ? Number(d[dataKey]) : minY;
-    const x = padLeft + (i / (data.length - 1)) * plotWidth;
+  const points = chartData.map((d, i) => {
+    const val = Number(d[dataKey]);
+    const x = padLeft + (i / (chartData.length - 1)) * plotWidth;
     const y = padTop + plotHeight - ((val - minY) / yRange) * plotHeight;
     return { x, y, val, item: d, idx: i };
   });
@@ -336,8 +340,12 @@ export function BarTrendChart({
   emptyMessage = "No check-in records for this period"
 }) {
   const [hoveredIdx, setHoveredIdx] = useState(null);
+  const chartData = (data || []).filter((item) => {
+    const value = Number(item?.[dataKey]);
+    return item?.[dataKey] != null && Number.isFinite(value);
+  });
 
-  if (!data || data.length === 0) {
+  if (chartData.length === 0) {
     return (
       <div
         className="flex items-center justify-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs py-10"
@@ -349,8 +357,8 @@ export function BarTrendChart({
   }
 
   // If only 1 data point, show single baseline visual
-  if (data.length === 1) {
-    const item = data[0];
+  if (chartData.length === 1) {
+    const item = chartData[0];
     const val = item[dataKey];
     return (
       <div
@@ -370,7 +378,7 @@ export function BarTrendChart({
     );
   }
 
-  const values = data.map((d) => (d[dataKey] != null ? Number(d[dataKey]) : 0));
+  const values = chartData.map((d) => Number(d[dataKey]));
   const rawMax = Math.max(...values, target || 0);
   const maxY = Math.ceil(rawMax * 1.15) || 10;
 
@@ -383,7 +391,7 @@ export function BarTrendChart({
   const plotWidth = svgWidth - padLeft - padRight;
   const plotHeight = svgHeight - padTop - padBottom;
 
-  const barCount = data.length;
+  const barCount = chartData.length;
   const slotWidth = plotWidth / barCount;
   const barWidth = Math.min(36, Math.max(12, slotWidth * 0.58));
 
@@ -480,8 +488,8 @@ export function BarTrendChart({
         )}
 
         {/* Bars */}
-        {data.map((item, i) => {
-          const val = item[dataKey] != null ? Number(item[dataKey]) : 0;
+        {chartData.map((item, i) => {
+          const val = Number(item[dataKey]);
           const barH = Math.max(3, (val / maxY) * plotHeight);
           const x = padLeft + i * slotWidth + (slotWidth - barWidth) / 2;
           const y = padTop + plotHeight - barH;
@@ -527,9 +535,9 @@ export function BarTrendChart({
         })}
 
         {/* X-axis Labels */}
-        {data.map((item, i) => {
+        {chartData.map((item, i) => {
           const x = padLeft + i * slotWidth + slotWidth / 2;
-          const total = data.length;
+          const total = chartData.length;
           const showLabel =
             total <= 8 ||
             i === 0 ||
@@ -563,7 +571,7 @@ export function BarTrendChart({
       </svg>
 
       {/* Floating Tooltip */}
-      {hoveredIdx !== null && data[hoveredIdx] && (
+      {hoveredIdx !== null && chartData[hoveredIdx] && (
         <div
           className="absolute z-10 -top-2 transform -translate-x-1/2 pointer-events-none transition-all duration-100"
           style={{
@@ -572,14 +580,14 @@ export function BarTrendChart({
         >
           <div className="bg-slate-900/95 backdrop-blur text-white text-xs px-3 py-1.5 rounded-lg shadow-lg border border-slate-700/50 flex flex-col items-center whitespace-nowrap">
             <span className="text-[10px] text-slate-300 font-medium">
-              {formatLocalDate(data[hoveredIdx][dateKey], {
+              {formatLocalDate(chartData[hoveredIdx][dateKey], {
                 weekday: "short",
                 month: "short",
                 day: "numeric"
               })}
             </span>
             <span className="font-bold text-sm text-white">
-              {(data[hoveredIdx][dataKey] ?? 0).toLocaleString()}{unit ? ` ${unit}` : ""}
+              {Number(chartData[hoveredIdx][dataKey]).toLocaleString()}{unit ? ` ${unit}` : ""}
             </span>
           </div>
         </div>
@@ -661,9 +669,9 @@ export function CalendarTrackingMatrix({
               key={idx}
               title={`${formatLocalDate(d.dateStr)}: ${
                 d.tracked
-                  ? `Completed (${(d.checkIn?.steps || 0).toLocaleString()} steps, ${
-                      d.checkIn?.sleepHours || 0
-                    }h sleep)`
+                  ? `Completed (${d.checkIn?.steps != null ? `${d.checkIn.steps.toLocaleString()} steps` : "steps not recorded"}, ${
+                      d.checkIn?.sleepHours != null ? `${d.checkIn.sleepHours}h sleep` : "sleep not recorded"
+                    })`
                   : "Not tracked"
               }`}
               className={`group relative flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-150 ${
@@ -692,8 +700,12 @@ export function CalendarTrackingMatrix({
                   <p className="font-bold">{formatLocalDate(d.dateStr)}</p>
                   {d.tracked ? (
                     <p className="text-emerald-300">
-                      {(d.checkIn?.steps || 0).toLocaleString()} steps •{" "}
-                      {d.checkIn?.sleepHours || 0}h sleep
+                      {d.checkIn?.steps != null
+                        ? `${d.checkIn.steps.toLocaleString()} steps`
+                        : "steps not recorded"}{" "}
+                      • {d.checkIn?.sleepHours != null
+                        ? `${d.checkIn.sleepHours}h sleep`
+                        : "sleep not recorded"}
                     </p>
                   ) : (
                     <p className="text-slate-300">No check-in</p>
@@ -713,15 +725,22 @@ export function CalendarTrackingMatrix({
  * Shows Steps and Sleep side by side across actual check-ins.
  */
 export function DualHabitChart({ checkIns = [] }) {
-  if (!checkIns || checkIns.length < 2) {
+  const chartData = (checkIns || []).filter((record) => (
+    record.steps != null &&
+    record.sleepHours != null &&
+    Number.isFinite(Number(record.steps)) &&
+    Number.isFinite(Number(record.sleepHours))
+  ));
+
+  if (chartData.length < 2) {
     return (
       <div className="flex items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs py-10">
-        Requires at least 2 check-ins to map habit relationship
+        Requires at least 2 check-ins with both steps and sleep recorded
       </div>
     );
   }
 
-  const maxSteps = Math.max(...checkIns.map((c) => Number(c.steps) || 0), 10000);
+  const maxSteps = Math.max(...chartData.map((record) => Number(record.steps)), 10000);
   const maxSleep = 12;
 
   return (
@@ -741,9 +760,9 @@ export function DualHabitChart({ checkIns = [] }) {
       </div>
 
       <div className="space-y-3">
-        {checkIns.slice(-7).map((c, idx) => {
-          const steps = Number(c.steps) || 0;
-          const sleep = Number(c.sleepHours) || 0;
+        {chartData.slice(-7).map((c, idx) => {
+          const steps = Number(c.steps);
+          const sleep = Number(c.sleepHours);
           const stepsPct = Math.min(100, Math.round((steps / maxSteps) * 100));
           const sleepPct = Math.min(100, Math.round((sleep / maxSleep) * 100));
 
@@ -844,11 +863,26 @@ export function CohortComparisonItem({
   unit = "",
   higherIsBetter = true
 }) {
-  const maxVal = Math.max(userVal || 0, cohortVal || 0) * 1.2 || 1;
-  const userPct = Math.min(100, Math.round(((userVal || 0) / maxVal) * 100));
-  const cohortPct = Math.min(100, Math.round(((cohortVal || 0) / maxVal) * 100));
+  const userValue = userVal == null ? null : Number(userVal);
+  const cohortValue = cohortVal == null ? null : Number(cohortVal);
+  const hasUserValue = userValue !== null && Number.isFinite(userValue);
+  const hasCohortValue = cohortValue !== null && Number.isFinite(cohortValue);
+  const maxVal =
+    Math.max(
+      ...(hasUserValue ? [userValue] : []),
+      ...(hasCohortValue ? [cohortValue] : []),
+      0
+    ) * 1.2 || 1;
+  const userPct = hasUserValue
+    ? Math.min(100, Math.round((userValue / maxVal) * 100))
+    : 0;
+  const cohortPct = hasCohortValue
+    ? Math.min(100, Math.round((cohortValue / maxVal) * 100))
+    : 0;
 
-  const diff = (userVal || 0) - (cohortVal || 0);
+  const diff = hasUserValue && hasCohortValue
+    ? userValue - cohortValue
+    : null;
   const diffSign = diff > 0 ? "+" : "";
 
   return (
@@ -856,7 +890,9 @@ export function CohortComparisonItem({
       <div className="flex justify-between items-center text-xs font-semibold mb-2">
         <span className="text-slate-800">{label}</span>
         <span className="text-[11px] font-mono">
-          {diff === 0 ? (
+          {diff === null ? (
+            <span className="text-slate-500">Building baseline</span>
+          ) : diff === 0 ? (
             <span className="text-slate-500">Matching cohort</span>
           ) : (
             <span
@@ -883,7 +919,7 @@ export function CohortComparisonItem({
             />
           </div>
           <span className="text-[10px] font-bold text-slate-700 w-14 text-right">
-            {(userVal || 0).toLocaleString()} {unit}
+            {hasUserValue ? `${userValue.toLocaleString()} ${unit}` : "Not recorded"}
           </span>
         </div>
 
@@ -896,7 +932,7 @@ export function CohortComparisonItem({
             />
           </div>
           <span className="text-[10px] text-slate-500 w-14 text-right">
-            {(cohortVal || 0).toLocaleString()} {unit}
+            {hasCohortValue ? `${cohortValue.toLocaleString()} ${unit}` : "Not available"}
           </span>
         </div>
       </div>

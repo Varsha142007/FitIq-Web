@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+from threading import Lock
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1]
@@ -7,11 +8,59 @@ DATASET_PATH = (
     / "FitIQ_FitLife360_Cleaned_Foundation.csv"
 )
 
+PARTICIPANT_COLUMN = "participant_id"
+BEHAVIOR_COLUMNS = (
+    "hours_sleep",
+    "daily_steps",
+    "hydration_level",
+    "duration_minutes",
+)
+_FOUNDATION_DATA = None
+_FOUNDATION_DATA_LOCK = Lock()
+
 
 def load_foundation_data():
-    df = pd.read_csv(DATASET_PATH)
+    global _FOUNDATION_DATA
 
-    return df
+    if _FOUNDATION_DATA is None:
+        with _FOUNDATION_DATA_LOCK:
+            if _FOUNDATION_DATA is None:
+                participant_totals = None
+                for chunk in pd.read_csv(
+                    DATASET_PATH,
+                    usecols=[PARTICIPANT_COLUMN, *BEHAVIOR_COLUMNS],
+                    dtype={PARTICIPANT_COLUMN: "category"},
+                    chunksize=25_000,
+                ):
+                    chunk_totals = chunk.groupby(
+                        PARTICIPANT_COLUMN,
+                        observed=True,
+                        sort=False,
+                    )[list(BEHAVIOR_COLUMNS)].agg(["sum", "count"])
+                    participant_totals = (
+                        chunk_totals
+                        if participant_totals is None
+                        else participant_totals.add(
+                            chunk_totals,
+                            fill_value=0,
+                        )
+                    )
+
+                participant_sums = participant_totals.xs(
+                    "sum",
+                    axis=1,
+                    level=1,
+                )
+                participant_counts = participant_totals.xs(
+                    "count",
+                    axis=1,
+                    level=1,
+                )
+                _FOUNDATION_DATA = participant_sums.div(
+                    participant_counts.where(participant_counts > 0)
+                ).reset_index()
+
+    return _FOUNDATION_DATA
 
 def calculate_pearson_correlation(x_values, y_values):
 
@@ -220,6 +269,9 @@ def analyze_behavior(tracking_records, foundation_df):
             "mode": "personal",
             "patterns": personal_patterns
         }
+
+    if foundation_df is None:
+        foundation_df = load_foundation_data()
 
     population_patterns = calculate_participant_level_patterns(
         foundation_df

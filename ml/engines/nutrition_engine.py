@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Lock
 import pandas as pd
 
 
@@ -13,6 +14,8 @@ DATA_PATH = (
     / "processed"
     / "FitIQ_Nutrition_Cleaned.csv"
 )
+_PREPARED_NUTRITION_DF = None
+_PREPARED_NUTRITION_DF_LOCK = Lock()
 
 
 # ============================================================
@@ -742,6 +745,20 @@ def calculate_practicality_score(df):
     )
 
     return df
+
+
+def load_prepared_nutrition_data():
+    """Prepare the USDA food table once per worker process."""
+    global _PREPARED_NUTRITION_DF
+
+    if _PREPARED_NUTRITION_DF is None:
+        with _PREPARED_NUTRITION_DF_LOCK:
+            if _PREPARED_NUTRITION_DF is None:
+                df = prepare_food_data(load_nutrition_data())
+                df = score_foods(df)
+                _PREPARED_NUTRITION_DF = calculate_practicality_score(df)
+
+    return _PREPARED_NUTRITION_DF
 
 
 # ============================================================
@@ -1693,19 +1710,7 @@ def analyze_nutrition(profile):
 
     try:
 
-        df = load_nutrition_data()
-
-        df = prepare_food_data(
-            df
-        )
-
-        df = score_foods(
-            df
-        )
-
-        df = calculate_practicality_score(
-            df
-        )
+        df = load_prepared_nutrition_data()
 
     except Exception as error:
 

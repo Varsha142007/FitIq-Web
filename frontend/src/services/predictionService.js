@@ -1,9 +1,8 @@
-import BACKEND_URL from "../config/api";
-const API_URL = BACKEND_URL;
+import { fetchBackend } from "./apiClient";
 
 export async function getPrediction(predictionInput) {
   try {
-    const response = await fetch(`${API_URL}/prediction`, {
+    const response = await fetchBackend("/prediction", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

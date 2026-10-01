@@ -16,7 +16,7 @@ import {
   isCheckInRecord,
   getLatestCheckInStatus
 } from "../services/firestoreService";
-import { useNavigate} from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../services/authService";
 import Sidebar from "../components/Sidebar";
 import ProfileSection, { getUserDisplayName } from "../components/ProfileSection";
@@ -30,6 +30,17 @@ import { fetchBackend } from "../services/apiClient";
 import MobileBottomNav from "../components/MobileBottomNav";
 
 const getTodayDate = getLocalDateKey;
+const DASHBOARD_PAGE_ROUTES = {
+  dashboard: "/dashboard",
+  insights: "/insights",
+  analytics: "/analytics",
+  nutrition: "/nutrition",
+  tracking: "/tracking",
+  profile: "/profile",
+};
+const DASHBOARD_ROUTE_PAGES = Object.fromEntries(
+  Object.entries(DASHBOARD_PAGE_ROUTES).map(([page, route]) => [route, page])
+);
 const getDateKey = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -229,11 +240,22 @@ const loadNutritionData = async () => {
   }
 };
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const routePage = DASHBOARD_ROUTE_PAGES[pathname] || "dashboard";
 
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePageState] = useState(routePage);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [authUser, setAuthUser] = useState(null);
+
+  useEffect(() => {
+    setActivePageState(routePage);
+  }, [routePage]);
+
+  const setActivePage = (page) => {
+    setActivePageState(page);
+    navigate(DASHBOARD_PAGE_ROUTES[page] || "/dashboard");
+  };
 
 const healthScore = profile?.bodyAnalysis?.healthScore || 0;
 

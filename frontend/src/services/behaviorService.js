@@ -1,8 +1,7 @@
-import BACKEND_URL from "../config/api";
-const API_URL = BACKEND_URL;
+import { fetchBackend } from "./apiClient";
 
 export const analyzeBehavior = async (trackingRecords) => {
-  const response = await fetch(`${API_URL}/behavior`, {
+  const response = await fetchBackend("/behavior", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

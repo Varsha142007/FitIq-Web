@@ -1,16 +1,8 @@
-import axios from "axios";
-import BACKEND_URL from "../config/api";
-
-const API_BASE_URL = BACKEND_URL;
+import { postBackend } from "./apiClient";
 
 export const getAnomalyAnalysis = async (trackingRecords) => {
   try {
-    const response = await axios.post(
-      `${API_BASE_URL}/anomaly`,
-      {
-        trackingRecords
-      }
-    );
+    const response = await postBackend("/anomaly", { trackingRecords });
 
     return response.data;
 

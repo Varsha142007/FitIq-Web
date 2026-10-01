@@ -1,5 +1,4 @@
-import BACKEND_URL from "../config/api";
-const API_URL = BACKEND_URL;
+import { fetchBackend } from "./apiClient";
 export const prepareFisInput = (profile, trackingRecords) => {
 
 let fisGoal = null;
@@ -121,7 +120,7 @@ const averageWaterIntake =
   }))
 };}
 export const calculateFis = async (fisInput) => {
-  const response = await fetch(`${API_URL}/fis`, {
+  const response = await fetchBackend("/fis", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

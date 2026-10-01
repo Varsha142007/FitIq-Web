@@ -1,10 +1,9 @@
-import BACKEND_URL from "../config/api";
-const API_URL = BACKEND_URL;
+import { fetchBackend } from "./apiClient";
 
 export async function getCohortAnalysis(userData) {
   try {
-    const response = await fetch(
-      `${API_URL}/cohort`,
+    const response = await fetchBackend(
+      "/cohort",
       {
         method: "POST",
         headers: {
