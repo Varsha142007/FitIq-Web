@@ -288,6 +288,13 @@ def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=No
             if item in name_lower:
                 chosen_ingredients.add(item)
 
+        meal_times = {
+            "breakfast": "8:00 AM - 9:00 AM",
+            "lunch": "1:00 PM - 2:00 PM",
+            "snack": "4:30 PM - 5:30 PM",
+            "dinner": "7:30 PM - 8:30 PM"
+        }
+
         chosen_plan[slot] = {
             "meal_id": best_meal["meal_id"],
             "meal": best_meal["meal_name"],
@@ -301,7 +308,8 @@ def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=No
             "carbs": float(round(best_meal["carbs_g"], 1)),
             "fats": float(round(best_meal["fat_g"], 1)),
             "fiber": float(round(best_meal["fiber_g"], 1)),
-            "prep_time": best_meal["preparation_time"]
+            "prep_time": best_meal["preparation_time"],
+            "time": meal_times.get(slot, "")
         }
 
     # Sum planned nutrition

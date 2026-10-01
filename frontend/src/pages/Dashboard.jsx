@@ -1630,7 +1630,12 @@ useEffect(() => {
                           <span className="px-3 py-1 rounded-full bg-orange-100 text-primary text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
                             <span>{emoji}</span> {title}
                           </span>
-                          {meal.cuisine && (
+                            {meal.time && (
+                              <span className="text-xs font-semibold px-2 py-1 bg-white text-orange-600 rounded-full border border-orange-200">
+                                {meal.time}
+                              </span>
+                            )}
+                            {meal.cuisine && (
                             <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-medium">
                               {meal.cuisine}
                             </span>

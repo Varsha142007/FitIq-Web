@@ -996,7 +996,8 @@ def generate_deterministic_interpretation(data):
                 "These recommendations come directly from your FitIQ data, "
                 "including your latest daily check-in habits, day-over-day changes, and goals. "
                 "No guesses were made."
-            )
+            ),
+            "nutrition": e6_nutrition.get("meal_plan", {})
         },
         "technical_mode": technical_mode,
         "recommendations": recommendations_list
