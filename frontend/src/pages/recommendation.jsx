@@ -195,9 +195,20 @@ function Recommendation({ actions, externalLoading, externalError }) {
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><span>🍎</span> Personalized Nutrition</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Object.entries(userMode.nutrition).map(([meal, plan]) => (
-              <div key={meal} className="bg-orange-50 rounded-xl p-4">
-                <h3 className="font-bold capitalize text-primary mb-2">{meal}</h3>
-                <p className="text-sm text-gray-700">{plan}</p>
+              <div key={meal} className="bg-orange-50 rounded-xl p-4 shadow-sm border border-orange-100">
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="font-bold capitalize text-primary">{meal}</h3>
+                  {typeof plan === "object" && plan?.time && (
+                    <span className="text-xs font-semibold px-2 py-1 bg-white text-orange-600 rounded-full border border-orange-200">
+                      {plan.time}
+                    </span>
+                  )}
+                </div>
+                {typeof plan === "object" ? (
+                  <p className="text-sm text-gray-700 leading-relaxed">{plan.meal || plan.explanation || JSON.stringify(plan)}</p>
+                ) : (
+                  <p className="text-sm text-gray-700 leading-relaxed">{plan}</p>
+                )}
               </div>
             ))}
           </div>

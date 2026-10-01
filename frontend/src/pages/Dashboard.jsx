@@ -852,24 +852,7 @@ useEffect(() => {
             </div>
 
             {/* Health + profile */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-              <div className="bg-white rounded-2xl shadow-card p-5 border border-green-100">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-textSecondary">Health Assessment</p>
-                  <span className="text-xl">❤️</span>
-                </div>
-                <p className="text-3xl font-bold text-green-600 mt-2">{healthScore}/100</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {healthScore >= 85 ? "Excellent" : healthScore >= 70 ? "Good" : healthScore >= 50 ? "Needs improvement" : "Complete your assessment"}
-                </p>
-                <button
-                  onClick={() => navigate("/health-assessment?update=true")}
-                  className="mt-4 w-full bg-green-500 text-white px-4 py-2.5 rounded-xl font-semibold hover:bg-green-600 transition"
-                >
-                  Update Health Assessment
-                </button>
-              </div>
-
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
               <div className="bg-white rounded-2xl shadow-card p-5">
                 <p className="text-sm text-textSecondary">Weight</p>
                 <p className="text-3xl font-bold text-primary mt-2">

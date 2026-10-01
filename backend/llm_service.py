@@ -147,10 +147,22 @@ You must respond ONLY with a valid JSON object matching the following EXACT sche
       }
     ],
     "nutrition": {
-      "breakfast": "...",
-      "lunch": "...",
-      "snack": "...",
-      "dinner": "..."
+      "breakfast": {
+        "time": "8:00 AM - 9:00 AM",
+        "meal": "..."
+      },
+      "lunch": {
+        "time": "1:00 PM - 2:00 PM",
+        "meal": "..."
+      },
+      "snack": {
+        "time": "4:30 PM - 5:30 PM",
+        "meal": "..."
+      },
+      "dinner": {
+        "time": "8:00 PM - 9:00 PM",
+        "meal": "..."
+      }
     },
     "fitness": ["..."],
     "sleep": ["..."],

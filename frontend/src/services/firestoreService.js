@@ -528,7 +528,7 @@ export const calculateStreakFromRecords = (
 
   const completedDates = new Set(
     records
-      .filter((record) => record.goalsCompleted === true)
+      .filter((record) => record.checkInCompleted || record.dailyCheckInCompleted)
       .map((record) => record.date)
   );
 
@@ -551,8 +551,13 @@ export const calculateStreakFromRecords = (
      ------------------------- */
 
   let currentStreak = 0;
-
   const currentDate = new Date(today);
+  const todayKey = formatDate(currentDate);
+
+  // If today is not completed, check if yesterday was. A streak is still alive until yesterday is missed.
+  if (!completedDates.has(todayKey)) {
+    currentDate.setDate(currentDate.getDate() - 1);
+  }
 
   while (true) {
     const dateKey = formatDate(currentDate);
