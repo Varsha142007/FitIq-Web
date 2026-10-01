@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import DailyTracking from "./DailyTracking";
 import Analytics from "./Analytics";
@@ -7,13 +7,10 @@ import { prepareFisInput, calculateFis } from "../services/fisService";
 import {
   getUserProfile,
   updateDailyGoals,
-  updateTodayCompletion,
-  getDailyTracking,
   getWeeklyTracking,
   getLast7DaysTracking,
   getStreakData,
   getLocalDateKey,
-  isCheckInRecord,
   getLatestCheckInStatus
 } from "../services/firestoreService";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -54,44 +51,6 @@ const getPastDateKey = (daysAgo) => {
   return getDateKey(date);
 };
 
-const calculateGoalStreak = (history = {}) => {
-  let streak = 0;
-  let offset = history[getPastDateKey(0)]?.completed ? 0 : 1;
-
-  while (history[getPastDateKey(offset)]?.completed) {
-    streak += 1;
-    offset += 1;
-  }
-
-  return streak;
-};
-
-const calculateBestStreak = (history = {}) => {
-  const completedDates = Object.keys(history)
-    .filter((date) => history[date]?.completed)
-    .sort();
-
-  if (!completedDates.length) return 0;
-
-  let best = 1;
-  let current = 1;
-
-  for (let i = 1; i < completedDates.length; i += 1) {
-    const previous = new Date(`${completedDates[i - 1]}T00:00:00`);
-    const currentDate = new Date(`${completedDates[i]}T00:00:00`);
-    const diff = Math.round((currentDate - previous) / 86400000);
-
-    if (diff === 1) {
-      current += 1;
-      best = Math.max(best, current);
-    } else {
-      current = 1;
-    }
-  }
-
-  return best;
-};
-
 const getActivityScore = (record) => {
   if (!record) return 0;
 
@@ -115,7 +74,6 @@ const [trackingRecords, setTrackingRecords] = useState([]);
   const [nutritionLoading, setNutritionLoading] = useState(false);
   const [nutritionError, setNutritionError] = useState("");
 
-  const [todayCompleted, setTodayCompleted] = useState(false);
   const [dailyTrackingRecorded, setDailyTrackingRecorded] = useState(false);
   const expirationTimerRef = useRef(null);
   const [trackingDays, setTrackingDays] = useState(0);
@@ -132,15 +90,12 @@ const [behaviorResult, setBehaviorResult] = useState(null);
 const [behaviorError, setBehaviorError] = useState(null);
 const [analyticsError, setAnalyticsError] = useState(null);
 const [predictionResult, setPredictionResult] = useState(null);
-const [predictionLoading, setPredictionLoading] = useState(false);
 const [predictionError, setPredictionError] = useState(null);
 const [consistencyPrediction, setConsistencyPrediction] = useState(null);
 const [, setConsistencyPredictionError] = useState(null);
 const [cohortResult, setCohortResult] = useState(null);
-const [cohortLoading, setCohortLoading] = useState(false);
 const [cohortError, setCohortError] = useState(null);
 const [anomalyResult, setAnomalyResult] = useState(null);
-const [anomalyLoading, setAnomalyLoading] = useState(false);
 const [anomalyError, setAnomalyError] = useState(null);
 // Engine 7 — Comprehensive Interpretation
 const [interpretationResult, setInterpretationResult] = useState(null);
@@ -163,9 +118,6 @@ const toggleGoal = async (goal) => {
   try {
     await updateDailyGoals(user.uid, updatedGoals);
 
-    const completed = Object.values(updatedGoals).every(Boolean);
-    setTodayCompleted(completed);
-
     // Recalculate streak from Firestore
     const streakData = await getStreakData(user.uid);
 
@@ -181,64 +133,6 @@ const toggleGoal = async (goal) => {
   }
 };
 
-const loadNutritionData = async () => {
-  const user = auth.currentUser;
-  if (!user || !profile) return;
-
-  try {
-    setNutritionLoading(true);
-    setNutritionError("");
-
-    const records = await getWeeklyTracking(user.uid);
-    const checkInStatus = await getLatestCheckInStatus(user.uid);
-    const todayCheckin = checkInStatus.isTracked ? checkInStatus.latestRecord : null;
-
-    const response = await fetchBackend(
-      "/nutrition",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          age: Number(profile.age),
-          gender: profile.gender,
-          height_cm: Number(profile.height),
-          weight_kg: Number(profile.weight),
-          activity_level: profile.activityLevel || "moderate",
-          goal: profile.goal || "maintenance",
-          diet_type: profile.dietPreference || "mixed",
-          today_checkin: todayCheckin,
-          recent_history: records || [],
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok || data.status !== "success") {
-      throw new Error(
-        data.message || "Unable to generate nutrition recommendations."
-      );
-    }
-
-    console.log("E6 NUTRITION RESULT:", data);
-
-    setNutritionData(data);
-    setNutritionError("");
-
-  } catch (error) {
-
-    console.error("E6 Nutrition Error:", error);
-
-    setNutritionError(
-      error.message || "Unable to generate nutrition recommendations."
-    );
-
-  } finally {
-    setNutritionLoading(false);
-  }
-};
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const routePage = DASHBOARD_ROUTE_PAGES[pathname] || "dashboard";
@@ -256,6 +150,62 @@ const loadNutritionData = async () => {
     setActivePageState(page);
     navigate(DASHBOARD_PAGE_ROUTES[page] || "/dashboard");
   };
+
+  const loadNutritionData = useCallback(async () => {
+    const user = auth.currentUser;
+    if (!user || !profile) return;
+
+    try {
+      setNutritionLoading(true);
+      setNutritionError("");
+
+      const records = await getWeeklyTracking(user.uid);
+      const checkInStatus = await getLatestCheckInStatus(user.uid);
+      const todayCheckin = checkInStatus.isTracked ? checkInStatus.latestRecord : null;
+
+      const response = await fetchBackend(
+        "/nutrition",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            age: Number(profile.age),
+            gender: profile.gender,
+            height_cm: Number(profile.height),
+            weight_kg: Number(profile.weight),
+            activity_level: profile.activityLevel || "moderate",
+            goal: profile.goal || "maintenance",
+            diet_type: profile.dietPreference || "mixed",
+            today_checkin: todayCheckin,
+            recent_history: records || [],
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || data.status !== "success") {
+        throw new Error(
+          data.message || "Unable to generate nutrition recommendations."
+        );
+      }
+
+      console.log("E6 NUTRITION RESULT:", data);
+
+      setNutritionData(data);
+      setNutritionError("");
+    } catch (error) {
+      console.error("E6 Nutrition Error:", error);
+
+      setNutritionError(
+        error.message || "Unable to generate nutrition recommendations."
+      );
+    } finally {
+      setNutritionLoading(false);
+    }
+  }, [profile]);
 
 const healthScore = profile?.bodyAnalysis?.healthScore || 0;
 
@@ -424,7 +374,6 @@ let _anomalyData = null;
 // ================= E3 PREDICTIVE ANALYTICS =================
 
 try {
-  setPredictionLoading(true);
   setPredictionError(null);
 
  /* const validTracking = trackingRecords.filter(
@@ -534,8 +483,6 @@ console.log(
   cohortInput
 );
 
-setCohortLoading(true);
-
 const cohortData = await getCohortAnalysis(
   cohortInput
 );
@@ -547,7 +494,6 @@ console.log(
 
 _cohortData = cohortData;
 setCohortResult(cohortData);
-setCohortLoading(false);
 setCohortError(null);
 } catch (error) {
   console.error("Analytics prediction failed:", error);
@@ -564,17 +510,11 @@ setCohortError(null);
     error.message || "Unable to generate cohort analysis"
   );
 
-  setCohortLoading(false);
-}finally {
-
-  setPredictionLoading(false);
-
 }
 
 // ================= E5 ANOMALY & ACTIVITY PATTERNS =================
 
 try {
-  setAnomalyLoading(true);
   setAnomalyError(null);
 
   const anomalyData = await getAnomalyAnalysis(
@@ -591,8 +531,6 @@ try {
   setAnomalyError(
     error.message || "Unable to generate anomaly analysis"
   );
-} finally {
-  setAnomalyLoading(false);
 }
 
 const fisInput = prepareFisInput(data, trackingRecords);
@@ -687,10 +625,8 @@ const today = getTodayDate();
 
     if (data.goalDate === today) {
       setGoals(data.dailyGoals || defaultGoals);
-      setTodayCompleted(Boolean(data.todayCompleted));
     } else {
       setGoals(defaultGoals);
-      setTodayCompleted(false);
       await updateDailyGoals(user.uid, defaultGoals);
       const streakData = await getStreakData(user.uid);
 
@@ -769,11 +705,29 @@ return () => {
 };
 }, []);
 
+const nutritionAutoLoadRef = useRef({ profile: null, requested: false });
 useEffect(() => {
-  if (activePage === "nutrition" && !nutritionData && !nutritionLoading && profile) {
+  const autoLoad = nutritionAutoLoadRef.current;
+  if (autoLoad.profile !== profile) {
+    autoLoad.profile = profile;
+    autoLoad.requested = false;
+  }
+
+  if (activePage !== "nutrition") {
+    autoLoad.requested = false;
+    return;
+  }
+
+  if (
+    !nutritionData &&
+    !nutritionLoading &&
+    profile &&
+    !autoLoad.requested
+  ) {
+    autoLoad.requested = true;
     loadNutritionData();
   }
-}, [activePage, nutritionData, nutritionLoading, profile]);
+}, [activePage, nutritionData, nutritionLoading, profile, loadNutritionData]);
  
   const handleLogout = async () => {
     try {
@@ -1376,12 +1330,21 @@ useEffect(() => {
   {activePage === "analytics" && (
   <div className="analytics-page-wrapper">
       <div className="analytics-content-wrapper">
-        {(analyticsError || behaviorError) && (
+        {(analyticsError || behaviorError || predictionError || cohortError || anomalyError) && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-amber-900">
             <p className="font-semibold">Some analytics could not be loaded.</p>
             {analyticsError && <p className="text-sm mt-1">{analyticsError}</p>}
             {behaviorError && (
               <p className="text-sm mt-1">Behavior analysis: {behaviorError}</p>
+            )}
+            {predictionError && (
+              <p className="text-sm mt-1">Prediction: {predictionError}</p>
+            )}
+            {cohortError && (
+              <p className="text-sm mt-1">Cohort analysis: {cohortError}</p>
+            )}
+            {anomalyError && (
+              <p className="text-sm mt-1">Anomaly analysis: {anomalyError}</p>
             )}
           </div>
         )}
@@ -2089,12 +2052,21 @@ useEffect(() => {
         </div>
       </div>
 
-      {(analyticsError || behaviorError) && (
+      {(analyticsError || behaviorError || predictionError || cohortError || anomalyError) && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-amber-900">
           <p className="font-semibold">Some analytics could not be loaded.</p>
           {analyticsError && <p className="text-sm mt-1">{analyticsError}</p>}
           {behaviorError && (
             <p className="text-sm mt-1">Behavior analysis: {behaviorError}</p>
+          )}
+          {predictionError && (
+            <p className="text-sm mt-1">Prediction: {predictionError}</p>
+          )}
+          {cohortError && (
+            <p className="text-sm mt-1">Cohort analysis: {cohortError}</p>
+          )}
+          {anomalyError && (
+            <p className="text-sm mt-1">Anomaly analysis: {anomalyError}</p>
           )}
         </div>
       )}
