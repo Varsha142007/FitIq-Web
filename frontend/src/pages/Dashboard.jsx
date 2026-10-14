@@ -13,7 +13,9 @@ import {
   calculateStreakFromRecords,
   getLocalDateKey,
   getLatestCheckInStatus,
-  updateStreak
+  updateStreak,
+  subscribeToDailyTracking,
+  extractRecordDateKey
 } from "../services/firestoreService";
 import { useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../services/authService";
@@ -109,34 +111,52 @@ const toggleGoal = async (goal) => {
   if (!user) return;
 
   const previousGoals = goals;
-
   const updatedGoals = {
     ...goals,
     [goal]: !goals[goal],
   };
 
+  const totalGoals = Object.keys(updatedGoals).length;
+  const completedCount = Object.values(updatedGoals).filter(Boolean).length;
+  const allCompleted = totalGoals > 0 && completedCount === totalGoals;
+
+  // 1. Immediately update UI checkbox state and streak (0ms reactive response)
   setGoals(updatedGoals);
 
+  const today = getTodayDate();
+  const existingToday = trackingRecords.find((r) => extractRecordDateKey(r) === today) || {};
+  const updatedTodayRecord = {
+    ...existingToday,
+    date: today,
+    id: today,
+    goalsCompleted: allCompleted,
+    goalCompletion: updatedGoals,
+    goalCompletionPercent: Math.round((completedCount / totalGoals) * 100),
+  };
+
+  const newRecords = [
+    ...trackingRecords.filter((r) => extractRecordDateKey(r) !== today),
+    updatedTodayRecord,
+  ];
+
+  const immediateStreak = calculateStreakFromRecords(newRecords);
+  setStreak(immediateStreak.currentStreak);
+  setBestStreak(immediateStreak.bestStreak);
+  setTrackingRecords(newRecords);
+
+  // 2. Persist to Firestore
   try {
     await updateDailyGoals(user.uid, updatedGoals);
-
-    // Recalculate streak from Firestore
-    const streakData = await getStreakData(user.uid);
-
-    setStreak(streakData.currentStreak);
-    setBestStreak(streakData.bestStreak);
-
-    // Keep user document streak in sync
-    await updateStreak(user.uid, streakData.currentStreak);
-
-    // Keep tracking records state in sync
-    const updatedRecords = await getWeeklyTracking(user.uid);
-    setTrackingRecords(updatedRecords);
-
+    await updateStreak(user.uid, immediateStreak.currentStreak);
   } catch (error) {
     console.error("Unable to save daily goal:", error);
 
+    // Rollback to previous state on failure
     setGoals(previousGoals);
+    const rollbackStreak = calculateStreakFromRecords(trackingRecords);
+    setStreak(rollbackStreak.currentStreak);
+    setBestStreak(rollbackStreak.bestStreak);
+    setTrackingRecords(trackingRecords);
 
     alert("Unable to save this goal. Please try again.");
   }
@@ -666,11 +686,6 @@ const today = getTodayDate();
       setGoals(data.dailyGoals || defaultGoals);
     } else {
       setGoals(defaultGoals);
-      await updateDailyGoals(user.uid, defaultGoals);
-      const streakData = await getStreakData(user.uid);
-
-setStreak(streakData.currentStreak);
-setBestStreak(streakData.bestStreak);
     }
 
     const streakData = await getStreakData(user.uid);
@@ -689,11 +704,34 @@ setBestStreak(streakData.bestStreak);
   }
   }
 
+  let unsubscribeTracking = null;
+
   const unsubscribeAuth = onAuthStateChanged(auth, async (resolvedUser) => {
     setAuthUser(resolvedUser);
     if (resolvedUser) {
+      if (unsubscribeTracking) {
+        unsubscribeTracking();
+      }
+      unsubscribeTracking = subscribeToDailyTracking(resolvedUser.uid, (records) => {
+        setTrackingRecords(records);
+        const streakData = calculateStreakFromRecords(records);
+        setStreak(streakData.currentStreak);
+        setBestStreak(streakData.bestStreak);
+
+        // Sync today's task completion from Firestore
+        const todayKey = getTodayDate();
+        const todayRecord = records.find((r) => extractRecordDateKey(r) === todayKey);
+        if (todayRecord && todayRecord.goalCompletion) {
+          setGoals(todayRecord.goalCompletion);
+        }
+      });
+
       await fetchProfile(resolvedUser);
     } else {
+      if (unsubscribeTracking) {
+        unsubscribeTracking();
+        unsubscribeTracking = null;
+      }
       setProfileLoading(false);
     }
   });
@@ -726,6 +764,9 @@ window.addEventListener(
 
 return () => {
   unsubscribeAuth();
+  if (unsubscribeTracking) {
+    unsubscribeTracking();
+  }
   window.removeEventListener(
     "dailyTrackingUpdated",
     handleTrackingUpdate

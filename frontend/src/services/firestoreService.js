@@ -7,6 +7,7 @@ import {
   addDoc,
   getDocs,
   serverTimestamp,
+  onSnapshot,
 } from "firebase/firestore";
 
 import { db } from "../firebase/firebase";
@@ -98,19 +99,42 @@ export const getTimestampMillis = (ts) => {
  */
 export const isCheckInRecord = (record) => {
   if (!record || typeof record !== "object") return false;
-  // If all today's tasks/goals were ticked and completed
-  if (record.goalsCompleted === true) return true;
-  // If explicitly flagged as check-in completed
-  if (record.checkInCompleted === true || record.dailyCheckInCompleted === true) return true;
-  // If it has recordedAt or completedAt timestamp (only saved by saveDailyTracking)
-  if (record.completedAt || record.recordedAt || record.completedAtMillis) return true;
-  // If it has actual check-in metrics (must have steps plus at least one other metric)
+
+  // 1. Explicit formal check-in completed via DailyTracking modal
+  if (record.checkInCompleted === true || record.dailyCheckInCompleted === true) {
+    return true;
+  }
+
+  // 2. All 4 daily tasks/goals ticked and completed
+  if (record.goalsCompleted === true) {
+    return true;
+  }
+
+  // 3. If tasks were explicitly NOT all completed (and no formal check-in flag),
+  // do NOT count as a check-in even if a timestamp exists from a previous toggle
+  if (record.goalsCompleted === false) {
+    const hasSteps = record.steps !== undefined && record.steps !== null && record.steps !== "";
+    const hasSleep = record.sleepHours !== undefined && record.sleepHours !== null && record.sleepHours !== "";
+    const hasWater = record.waterIntake !== undefined && record.waterIntake !== null && record.waterIntake !== "";
+    const hasCalories = record.caloriesConsumed !== undefined && record.caloriesConsumed !== null && record.caloriesConsumed !== "";
+    return Boolean(hasSteps && (hasSleep || hasWater || hasCalories));
+  }
+
+  // 4. Actual check-in metrics logged
   const hasSteps = record.steps !== undefined && record.steps !== null && record.steps !== "";
   const hasSleep = record.sleepHours !== undefined && record.sleepHours !== null && record.sleepHours !== "";
   const hasWater = record.waterIntake !== undefined && record.waterIntake !== null && record.waterIntake !== "";
   const hasCalories = record.caloriesConsumed !== undefined && record.caloriesConsumed !== null && record.caloriesConsumed !== "";
+  if (hasSteps && (hasSleep || hasWater || hasCalories)) {
+    return true;
+  }
 
-  return Boolean(hasSteps && (hasSleep || hasWater || hasCalories));
+  // 5. Formal check-in timestamp (only for records without goalCompletion or with formal check-in)
+  if (!record.goalCompletion && (record.completedAt || record.recordedAt)) {
+    return true;
+  }
+
+  return false;
 };
 
 /**
@@ -489,10 +513,6 @@ export const updateDailyGoals = async (uid, goals) => {
     goalsCompleted,
   };
 
-  if (goalsCompleted) {
-    trackingPayload.completedAtMillis = Date.now();
-  }
-
   await setDoc(
     trackingRef,
     trackingPayload,
@@ -689,6 +709,30 @@ export const getStreakData = async (uid) => {
     console.error("Error getting streak data from Firestore:", error);
     return { currentStreak: 0, bestStreak: 0 };
   }
+};
+
+/* =========================================================
+   REACTIVE DAILY TRACKING SUBSCRIPTION
+   ========================================================= */
+
+export const subscribeToDailyTracking = (uid, callback) => {
+  if (!uid) return () => {};
+
+  const trackingRef = collection(db, "users", uid, "dailyTracking");
+
+  return onSnapshot(
+    trackingRef,
+    (snapshot) => {
+      const records = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      }));
+      callback(records);
+    },
+    (error) => {
+      console.error("Error subscribing to daily tracking:", error);
+    }
+  );
 };
 
 
