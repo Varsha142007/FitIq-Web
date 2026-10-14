@@ -7,6 +7,8 @@ import { prepareFisInput, calculateFis } from "../services/fisService";
 import {
   getUserProfile,
   updateDailyGoals,
+  completeDailyGoals,
+  getGoalsLockStatus,
   getWeeklyTracking,
   getLast7DaysTracking,
   getStreakData,
@@ -15,7 +17,8 @@ import {
   getLatestCheckInStatus,
   updateStreak,
   subscribeToDailyTracking,
-  extractRecordDateKey
+  extractRecordDateKey,
+  TWENTY_FOUR_HOURS_MS
 } from "../services/firestoreService";
 import { useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../services/authService";
@@ -84,83 +87,190 @@ const [trackingRecords, setTrackingRecords] = useState([]);
 const [trackingConsistency, setTrackingConsistency] = useState(0);
 const [last7DaysTracking, setLast7DaysTracking] = useState([]);
   const [goals, setGoals] = useState({
-  water: false,
-  workout: false,
-  steps: false,
-  sleep: false
-});
-const [fisResult, setFisResult] = useState(null);
-const [behaviorResult, setBehaviorResult] = useState(null);
-const [behaviorError, setBehaviorError] = useState(null);
-const [analyticsError, setAnalyticsError] = useState(null);
-const [predictionResult, setPredictionResult] = useState(null);
-const [predictionError, setPredictionError] = useState(null);
-const [consistencyPrediction, setConsistencyPrediction] = useState(null);
-const [, setConsistencyPredictionError] = useState(null);
-const [cohortResult, setCohortResult] = useState(null);
-const [cohortError, setCohortError] = useState(null);
-const [anomalyResult, setAnomalyResult] = useState(null);
-const [anomalyError, setAnomalyError] = useState(null);
-// Engine 7 — Comprehensive Interpretation
-const [interpretationResult, setInterpretationResult] = useState(null);
-const [interpretationLoading, setInterpretationLoading] = useState(false);
-const [interpretationError, setInterpretationError] = useState(null);
-const [nutritionPlanIndex, setNutritionPlanIndex] = useState(0);
-const toggleGoal = async (goal) => {
-  const user = auth.currentUser;
-  if (!user) return;
+    water: false,
+    workout: false,
+    steps: false,
+    sleep: false
+  });
+  const [goalsLockStatus, setGoalsLockStatus] = useState({
+    isLocked: false,
+    remainingMs: 0,
+    completedAtMillis: null,
+  });
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsError, setGoalsError] = useState("");
 
-  const previousGoals = goals;
-  const updatedGoals = {
-    ...goals,
-    [goal]: !goals[goal],
+  const [fisResult, setFisResult] = useState(null);
+  const [behaviorResult, setBehaviorResult] = useState(null);
+  const [behaviorError, setBehaviorError] = useState(null);
+  const [analyticsError, setAnalyticsError] = useState(null);
+  const [predictionResult, setPredictionResult] = useState(null);
+  const [predictionError, setPredictionError] = useState(null);
+  const [consistencyPrediction, setConsistencyPrediction] = useState(null);
+  const [, setConsistencyPredictionError] = useState(null);
+  const [cohortResult, setCohortResult] = useState(null);
+  const [cohortError, setCohortError] = useState(null);
+  const [anomalyResult, setAnomalyResult] = useState(null);
+  const [anomalyError, setAnomalyError] = useState(null);
+  // Engine 7 — Comprehensive Interpretation
+  const [interpretationResult, setInterpretationResult] = useState(null);
+  const [interpretationLoading, setInterpretationLoading] = useState(false);
+  const [interpretationError, setInterpretationError] = useState(null);
+  const [nutritionPlanIndex, setNutritionPlanIndex] = useState(0);
+
+  // Live countdown for the 24-hour goal lock
+  useEffect(() => {
+    if (!goalsLockStatus.isLocked || !goalsLockStatus.completedAtMillis) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const elapsed = Date.now() - goalsLockStatus.completedAtMillis;
+      const remaining = Math.max(0, TWENTY_FOUR_HOURS_MS - elapsed);
+
+      if (remaining <= 0) {
+        // Exactly 24 hours have passed! Unlock for the next cycle
+        setGoalsLockStatus({
+          isLocked: false,
+          remainingMs: 0,
+          completedAtMillis: null,
+        });
+        setGoals({
+          water: false,
+          workout: false,
+          steps: false,
+          sleep: false,
+        });
+        clearInterval(intervalId);
+      } else {
+        setGoalsLockStatus((prev) => ({
+          ...prev,
+          remainingMs: remaining,
+        }));
+      }
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [goalsLockStatus.isLocked, goalsLockStatus.completedAtMillis]);
+
+  const formatRemainingTime = (ms) => {
+    if (!ms || ms <= 0) return "0h 0m 0s";
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}h ${minutes}m ${seconds}s`;
   };
 
-  const totalGoals = Object.keys(updatedGoals).length;
-  const completedCount = Object.values(updatedGoals).filter(Boolean).length;
-  const allCompleted = totalGoals > 0 && completedCount === totalGoals;
+  const toggleGoal = async (goal) => {
+    // 1. Block action if locked or currently saving
+    if (goalsLockStatus.isLocked || goalsSaving) {
+      return;
+    }
 
-  // 1. Immediately update UI checkbox state and streak (0ms reactive response)
-  setGoals(updatedGoals);
+    const user = auth.currentUser;
+    if (!user) return;
 
-  const today = getTodayDate();
-  const existingToday = trackingRecords.find((r) => extractRecordDateKey(r) === today) || {};
-  const updatedTodayRecord = {
-    ...existingToday,
-    date: today,
-    id: today,
-    goalsCompleted: allCompleted,
-    goalCompletion: updatedGoals,
-    goalCompletionPercent: Math.round((completedCount / totalGoals) * 100),
+    const previousGoals = { ...goals };
+    const updatedGoals = {
+      ...goals,
+      [goal]: !goals[goal],
+    };
+
+    const totalGoals = Object.keys(updatedGoals).length;
+    const completedCount = Object.values(updatedGoals).filter(Boolean).length;
+    const allCompleted = totalGoals > 0 && completedCount === totalGoals;
+
+    setGoalsSaving(true);
+    setGoalsError("");
+
+    if (allCompleted) {
+      // User completed all 4 tasks!
+      const completionTime = Date.now();
+      try {
+        // Atomic persistence in Firestore
+        await completeDailyGoals(user.uid, updatedGoals, completionTime);
+
+        // Update tracking records and recalculate streak
+        const todayKey = getTodayDate();
+        const existingToday = trackingRecords.find((r) => extractRecordDateKey(r) === todayKey) || {};
+        const updatedTodayRecord = {
+          ...existingToday,
+          date: todayKey,
+          id: todayKey,
+          goalsCompleted: true,
+          goalsCompletedAtMillis: completionTime,
+          goalCompletion: updatedGoals,
+          goalCompletionPercent: 100,
+        };
+        const updatedRecords = [
+          ...trackingRecords.filter((r) => extractRecordDateKey(r) !== todayKey),
+          updatedTodayRecord,
+        ];
+
+        const streakResult = calculateStreakFromRecords(updatedRecords);
+        const newCurrentStreak = streakResult.currentStreak;
+        const newBestStreak = Math.max(bestStreak, newCurrentStreak, streakResult.bestStreak);
+
+        await updateStreak(user.uid, newCurrentStreak, newBestStreak);
+
+        // UI updates immediately AFTER successful save
+        setGoals(updatedGoals);
+        setStreak(newCurrentStreak);
+        setBestStreak(newBestStreak);
+        setTrackingRecords(updatedRecords);
+        setGoalsLockStatus({
+          isLocked: true,
+          remainingMs: TWENTY_FOUR_HOURS_MS,
+          completedAtMillis: completionTime,
+        });
+      } catch (error) {
+        console.error("Failed to save completed goals:", error);
+        setGoals(previousGoals);
+        setGoalsError("Failed to save completed goals. Please try again.");
+        alert("Failed to save completed goals to Firestore. Please check your connection and try again.");
+      } finally {
+        setGoalsSaving(false);
+      }
+    } else {
+      // Partial toggle (1, 2, or 3 goals completed)
+      try {
+        await updateDailyGoals(user.uid, updatedGoals);
+
+        // UI updates immediately AFTER successful save
+        setGoals(updatedGoals);
+
+        const todayKey = getTodayDate();
+        const existingToday = trackingRecords.find((r) => extractRecordDateKey(r) === todayKey) || {};
+        const updatedTodayRecord = {
+          ...existingToday,
+          date: todayKey,
+          id: todayKey,
+          goalsCompleted: false,
+          goalsCompletedAtMillis: null,
+          goalCompletion: updatedGoals,
+          goalCompletionPercent: Math.round((completedCount / totalGoals) * 100),
+        };
+        const updatedRecords = [
+          ...trackingRecords.filter((r) => extractRecordDateKey(r) !== todayKey),
+          updatedTodayRecord,
+        ];
+        setTrackingRecords(updatedRecords);
+
+        // Streak is not incremented for partial completion
+        const streakResult = calculateStreakFromRecords(updatedRecords);
+        setStreak(streakResult.currentStreak);
+        setBestStreak(streakResult.bestStreak);
+      } catch (error) {
+        console.error("Failed to update daily goal:", error);
+        setGoals(previousGoals);
+        setGoalsError("Failed to update daily goal. Please try again.");
+        alert("Unable to save daily goal. Please check your connection and try again.");
+      } finally {
+        setGoalsSaving(false);
+      }
+    }
   };
-
-  const newRecords = [
-    ...trackingRecords.filter((r) => extractRecordDateKey(r) !== today),
-    updatedTodayRecord,
-  ];
-
-  const immediateStreak = calculateStreakFromRecords(newRecords);
-  setStreak(immediateStreak.currentStreak);
-  setBestStreak(immediateStreak.bestStreak);
-  setTrackingRecords(newRecords);
-
-  // 2. Persist to Firestore
-  try {
-    await updateDailyGoals(user.uid, updatedGoals);
-    await updateStreak(user.uid, immediateStreak.currentStreak);
-  } catch (error) {
-    console.error("Unable to save daily goal:", error);
-
-    // Rollback to previous state on failure
-    setGoals(previousGoals);
-    const rollbackStreak = calculateStreakFromRecords(trackingRecords);
-    setStreak(rollbackStreak.currentStreak);
-    setBestStreak(rollbackStreak.bestStreak);
-    setTrackingRecords(trackingRecords);
-
-    alert("Unable to save this goal. Please try again.");
-  }
-};
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -673,7 +783,9 @@ setTrackingConsistency(
   Math.round((recordedDays / 7) * 100)
 );
 
-const today = getTodayDate();
+    const today = getTodayDate();
+    const lockStatus = getGoalsLockStatus(data, trackingRecords);
+    setGoalsLockStatus(lockStatus);
 
     const defaultGoals = {
       water: false,
@@ -682,10 +794,19 @@ const today = getTodayDate();
       sleep: false
     };
 
-    if (data.goalDate === today) {
-      setGoals(data.dailyGoals || defaultGoals);
+    if (lockStatus.isLocked) {
+      setGoals({
+        water: true,
+        workout: true,
+        steps: true,
+        sleep: true,
+      });
     } else {
-      setGoals(defaultGoals);
+      if (data.goalDate === today && !data.goalsCompleted) {
+        setGoals(data.dailyGoals || defaultGoals);
+      } else {
+        setGoals(defaultGoals);
+      }
     }
 
     const streakData = await getStreakData(user.uid);
@@ -718,11 +839,25 @@ const today = getTodayDate();
         setStreak(streakData.currentStreak);
         setBestStreak(streakData.bestStreak);
 
-        // Sync today's task completion from Firestore
-        const todayKey = getTodayDate();
-        const todayRecord = records.find((r) => extractRecordDateKey(r) === todayKey);
-        if (todayRecord && todayRecord.goalCompletion) {
-          setGoals(todayRecord.goalCompletion);
+        // Respect 24-hour goal lock in live tracking subscription
+        const currentLock = getGoalsLockStatus(null, records);
+        if (currentLock.isLocked) {
+          setGoalsLockStatus(currentLock);
+          setGoals({
+            water: true,
+            workout: true,
+            steps: true,
+            sleep: true,
+          });
+        } else {
+          setGoalsLockStatus(currentLock);
+          const todayKey = getTodayDate();
+          const todayRecord = records.find((r) => extractRecordDateKey(r) === todayKey);
+          if (todayRecord && todayRecord.goalCompletion && !todayRecord.goalsCompleted) {
+            setGoals(todayRecord.goalCompletion);
+          } else if (!todayRecord || todayRecord.goalsCompleted) {
+            setGoals({ water: false, workout: false, steps: false, sleep: false });
+          }
         }
       });
 
@@ -1152,13 +1287,30 @@ useEffect(() => {
             {/* Goals + weekly overview */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
               <div className="bg-gradient-to-br from-orange-50 to-white rounded-2xl shadow-card p-6 border border-orange-100">
-                <p className="text-sm font-semibold text-primary uppercase tracking-wide">
-                  Today’s Goals
-                </p>
-                <h2 className="text-2xl font-bold mt-2">Choose what you complete today.</h2>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-primary uppercase tracking-wide">
+                    Today’s Goals
+                  </p>
+                  {goalsLockStatus.isLocked && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-200">
+                      <span>🔒 Locked (24h)</span>
+                      <span>•</span>
+                      <span>Unlocks in {formatRemainingTime(goalsLockStatus.remainingMs)}</span>
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-2xl font-bold mt-2">Choose what you completed today.</h2>
                 <p className="text-sm text-textSecondary mt-2">
-                  Your selections are saved and restored after refresh.
+                  {goalsLockStatus.isLocked
+                    ? "All 4 tasks completed! Checkboxes are locked for 24 hours until the next cycle."
+                    : "Your selections are saved and restored after refresh."}
                 </p>
+
+                {goalsError && (
+                  <div className="mt-3 p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                    {goalsError}
+                  </div>
+                )}
 
                 <div className="mt-5 space-y-3">
                   {[
@@ -1166,37 +1318,53 @@ useEffect(() => {
                     ["workout", "🏃", "Complete your workout"],
                     ["steps", "👣", "Reach your daily steps"],
                     ["sleep", "😴", "Meet your sleep target"]
-                  ].map(([key, icon, label]) => (
-                    <label
-                      key={key}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${
-                        goals[key]
-                          ? "bg-green-50 border-green-200"
-                          : "bg-white border-orange-100 hover:border-orange-200"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={Boolean(goals[key])}
-                        onChange={() => toggleGoal(key)}
-                        className="w-4 h-4 accent-orange-600"
-                      />
-                      <span className="text-lg">{icon}</span>
-                      <span
-                        className={`text-sm font-medium ${
-                          goals[key] ? "text-green-700 line-through" : "text-gray-700"
+                  ].map(([key, icon, label]) => {
+                    const isChecked = Boolean(goals[key]);
+                    const isDisabled = goalsLockStatus.isLocked || goalsSaving;
+                    return (
+                      <label
+                        key={key}
+                        className={`flex items-center gap-3 p-3 rounded-xl border transition ${
+                          isDisabled ? "cursor-not-allowed opacity-90" : "cursor-pointer"
+                        } ${
+                          isChecked
+                            ? "bg-green-50 border-green-200"
+                            : "bg-white border-orange-100 hover:border-orange-200"
                         }`}
                       >
-                        {label}
-                      </span>
-                    </label>
-                  ))}
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={isDisabled}
+                          onChange={() => toggleGoal(key)}
+                          className="w-4 h-4 accent-orange-600 disabled:cursor-not-allowed"
+                        />
+                        <span className="text-lg">{icon}</span>
+                        <span
+                          className={`text-sm font-medium ${
+                            isChecked ? "text-green-700 line-through" : "text-gray-700"
+                          }`}
+                        >
+                          {label}
+                        </span>
+                        {goalsLockStatus.isLocked && (
+                          <span className="ml-auto text-xs text-green-600 font-semibold flex items-center gap-1">
+                            ✓ Done
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
 
                 <div className="mt-4 flex items-center justify-between text-sm">
-                  <span className="text-textSecondary">Today’s completion</span>
+                  <span className="text-textSecondary">
+                    {goalsLockStatus.isLocked ? "Cycle status" : "Today’s completion"}
+                  </span>
                   <span className="font-bold text-primary">
-                    {Object.values(goals).filter(Boolean).length}/4
+                    {goalsLockStatus.isLocked
+                      ? "4/4 Completed (Locked)"
+                      : `${Object.values(goals).filter(Boolean).length}/4`}
                   </span>
                 </div>
               </div>

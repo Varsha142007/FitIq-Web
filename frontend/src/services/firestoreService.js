@@ -459,6 +459,86 @@ export const getLast365DaysTracking = async (uid) => {
    DAILY GOALS
    ========================================================= */
 
+export const getGoalsLockStatus = (recordOrUser, records = []) => {
+  let latestMillis = 0;
+  let isCompleted = false;
+
+  // 1. Check passed user/record object
+  if (recordOrUser && typeof recordOrUser === "object") {
+    const rawTs = recordOrUser.goalsCompletedAtMillis;
+    const millis = getTimestampMillis(rawTs);
+    if (recordOrUser.goalsCompleted && millis) {
+      if (millis > latestMillis) {
+        latestMillis = millis;
+        isCompleted = true;
+      }
+    }
+  }
+
+  // 2. Check tracking records array
+  if (Array.isArray(records)) {
+    for (const r of records) {
+      if (r && r.goalsCompleted) {
+        const rawTs = r.goalsCompletedAtMillis || r.completedAt || r.recordedAt || r.timestamp;
+        const millis = getTimestampMillis(rawTs);
+        if (millis && millis > latestMillis) {
+          latestMillis = millis;
+          isCompleted = true;
+        }
+      }
+    }
+  }
+
+  if (!isCompleted || !latestMillis) {
+    return { isLocked: false, remainingMs: 0, completedAtMillis: null };
+  }
+
+  const elapsed = Date.now() - latestMillis;
+  const remainingMs = Math.max(0, TWENTY_FOUR_HOURS_MS - elapsed);
+  return {
+    isLocked: remainingMs > 0,
+    remainingMs,
+    completedAtMillis: latestMillis,
+  };
+};
+
+export const completeDailyGoals = async (uid, goals, timestamp = Date.now()) => {
+  const date = getLocalDateKey();
+  const userRef = doc(db, "users", uid);
+  const trackingRef = doc(db, "users", uid, "dailyTracking", date);
+
+  // 1. Update user profile document with completion and timestamp
+  await setDoc(
+    userRef,
+    {
+      dailyGoals: goals,
+      goalDate: date,
+      todayCompleted: true,
+      goalsCompleted: true,
+      goalsCompletedAtMillis: timestamp,
+    },
+    { merge: true }
+  );
+
+  // 2. Update date-based dailyTracking record
+  const trackingPayload = {
+    date,
+    goalCompletion: goals,
+    goalCompletionPercent: 100,
+    goalsCompleted: true,
+    goalsCompletedAtMillis: timestamp,
+  };
+
+  await setDoc(trackingRef, trackingPayload, { merge: true });
+
+  return {
+    success: true,
+    goalsCompleted: true,
+    goalsCompletedAtMillis: timestamp,
+    date,
+  };
+};
+
 export const updateDailyGoals = async (uid, goals) => {
   const date = getLocalDateKey();
 
@@ -481,12 +561,16 @@ export const updateDailyGoals = async (uid, goals) => {
     totalGoals > 0 &&
     completedCount === totalGoals;
 
+  const timestamp = goalsCompleted ? Date.now() : null;
+
   await setDoc(
     userRef,
     {
       dailyGoals: goals,
       goalDate: date,
       todayCompleted: goalsCompleted,
+      goalsCompleted,
+      ...(goalsCompleted ? { goalsCompletedAtMillis: timestamp } : { goalsCompletedAtMillis: null }),
     },
     { merge: true }
   );
@@ -511,6 +595,7 @@ export const updateDailyGoals = async (uid, goals) => {
     goalCompletion: goals,
     goalCompletionPercent: completionPercent,
     goalsCompleted,
+    ...(goalsCompleted ? { goalsCompletedAtMillis: timestamp } : { goalsCompletedAtMillis: null }),
   };
 
   await setDoc(
@@ -523,6 +608,7 @@ export const updateDailyGoals = async (uid, goals) => {
 
   return {
     goalsCompleted,
+    goalsCompletedAtMillis: timestamp,
     completionPercent,
   };
 };
@@ -604,16 +690,20 @@ export const calculateStreakFromRecords = (records) => {
     };
   }
 
-  // Count each calendar day only once using Set
-  const completedDates = new Set();
+  // Count each calendar day only once using Map
+  const dateMap = new Map();
+  let latestMillis = 0;
   for (const record of checkInRecords) {
     const dateKey = extractRecordDateKey(record);
     if (dateKey) {
-      completedDates.add(dateKey);
+      dateMap.set(dateKey, record);
+      const raw = record.goalsCompletedAtMillis || record.completedAtMillis || record.completedAt || record.recordedAt || record.timestamp;
+      const m = getTimestampMillis(raw);
+      if (m && m > latestMillis) latestMillis = m;
     }
   }
 
-  if (completedDates.size === 0) {
+  if (dateMap.size === 0) {
     return {
       currentStreak: 0,
       bestStreak: 0,
@@ -636,31 +726,58 @@ export const calculateStreakFromRecords = (records) => {
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = formatDate(yesterday);
 
-  let currentStreak = 0;
+  // Helper to determine if a missing day was locked due to a 24-hour cycle from the prior day
+  const isLockedDate = (missingDateKey) => {
+    const d = new Date(`${missingDateKey}T12:00:00`);
+    d.setDate(d.getDate() - 1);
+    const prevKey = formatDate(d);
+    const prevRecord = dateMap.get(prevKey);
+    if (!prevRecord) return false;
+    const rawTs = prevRecord.goalsCompletedAtMillis || prevRecord.completedAtMillis;
+    const m = getTimestampMillis(rawTs);
+    if (!m) return false;
+    const unlockTime = m + TWENTY_FOUR_HOURS_MS;
+    const missingDateNoon = new Date(`${missingDateKey}T12:00:00`).getTime();
+    return unlockTime >= missingDateNoon;
+  };
+
+  const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
+  let startCursor = null;
 
   // Streak rules:
-  // - If user has checked in today, count today as latest streak day.
-  // - If user has not checked in today but checked in yesterday, retain streak from yesterday.
-  // - If user missed an entire day (neither today nor yesterday), streak resets to 0.
-  // - First-ever check-in starts a streak of 1.
-  if (completedDates.has(todayKey)) {
-    const cursor = new Date(today);
-    while (completedDates.has(formatDate(cursor))) {
-      currentStreak++;
-      cursor.setDate(cursor.getDate() - 1);
+  // - If user has completed tasks today, count today as latest streak day.
+  // - If user has not completed tasks today but completed yesterday, retain streak from yesterday.
+  // - If yesterday was locked by day-before-yesterday's late completion and we are within 48h, retain streak.
+  // - If user missed an entire cycle (neither today nor yesterday, and > 48h), streak resets to 0.
+  if (dateMap.has(todayKey)) {
+    startCursor = new Date(today);
+  } else if (dateMap.has(yesterdayKey)) {
+    startCursor = new Date(yesterday);
+  } else if (isLockedDate(yesterdayKey) && (now.getTime() - latestMillis < FORTY_EIGHT_HOURS_MS)) {
+    const dayBeforeYesterday = new Date(yesterday);
+    dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 1);
+    startCursor = dayBeforeYesterday;
+  }
+
+  let currentStreak = 0;
+  if (startCursor) {
+    const cursor = new Date(startCursor);
+    while (true) {
+      const key = formatDate(cursor);
+      if (dateMap.has(key)) {
+        currentStreak++;
+        cursor.setDate(cursor.getDate() - 1);
+      } else if (isLockedDate(key)) {
+        // Skip over day that was locked
+        cursor.setDate(cursor.getDate() - 1);
+      } else {
+        break;
+      }
     }
-  } else if (completedDates.has(yesterdayKey)) {
-    const cursor = new Date(yesterday);
-    while (completedDates.has(formatDate(cursor))) {
-      currentStreak++;
-      cursor.setDate(cursor.getDate() - 1);
-    }
-  } else {
-    currentStreak = 0;
   }
 
   // Best streak across entire valid history
-  const sortedDates = Array.from(completedDates).sort();
+  const sortedDates = Array.from(dateMap.keys()).sort();
   let bestStreak = 0;
   let runningStreak = 0;
   let previousDate = null;
@@ -675,7 +792,7 @@ export const calculateStreakFromRecords = (records) => {
       const diffMs = currentDate.getTime() - previousDate.getTime();
       const differenceDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
-      if (differenceDays === 1) {
+      if (differenceDays === 1 || (differenceDays === 2 && isLockedDate(formatDate(new Date(currentDate.getTime() - 86400000))))) {
         runningStreak++;
       } else {
         runningStreak = 1;
@@ -742,14 +859,20 @@ export const subscribeToDailyTracking = (uid, callback) => {
 
 export const updateStreak = async (
   uid,
-  streak
+  streak,
+  bestStreak = null
 ) => {
   const userRef = doc(db, "users", uid);
 
-  await updateDoc(userRef, {
+  const payload = {
     streak,
     lastCompletedDate: getLocalDateKey(),
-  });
+  };
+  if (bestStreak !== null && bestStreak !== undefined) {
+    payload.bestStreak = bestStreak;
+  }
+
+  await setDoc(userRef, payload, { merge: true });
 };
 
 /* =========================================================
