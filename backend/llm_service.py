@@ -1143,6 +1143,8 @@ Return strictly JSON matching this structure:
         data,
         nutrition_result.get("targets", {}),
         data.get("recent_history"),
-        data.get("today_checkin")
+        data.get("today_checkin"),
+        plan_index=int(data.get("plan_index", 0)),
+        exclude_meals=data.get("current_meals") or data.get("exclude_meals")
     )
     return fallback_res["meal_plan"]

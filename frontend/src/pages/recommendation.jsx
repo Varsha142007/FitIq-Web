@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { getComprehensiveInterpretation } from "../services/interpretationService";
-import { getUserProfile, getWeeklyTracking, getDailyTracking } from "../services/firestoreService";
+import { getUserProfile, getWeeklyTracking, getDailyTracking, getLatestCheckInStatus } from "../services/firestoreService";
+import { fetchBackend } from "../services/apiClient";
 import { auth } from "../firebase/firebase";
 
 function Recommendation({ actions, externalLoading, externalError }) {
   const [localRecommendations, setLocalRecommendations] = useState([]);
   const [localLoading, setLocalLoading] = useState(true);
   const [localError, setLocalError] = useState("");
+  const [refreshingPlan, setRefreshingPlan] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+  const [planIndex, setPlanIndex] = useState(0);
 
   const useExternal = actions !== undefined;
 
@@ -113,6 +117,76 @@ function Recommendation({ actions, externalLoading, externalError }) {
   const userMode = isArray ? null : displayData;
   const priorityActions = isArray ? displayData : userMode?.priority_actions;
 
+  const refreshNutritionPlan = async () => {
+    if (refreshingPlan) return;
+    try {
+      setRefreshingPlan(true);
+      setRefreshError("");
+      const user = auth.currentUser;
+      if (!user) {
+        setRefreshError("Please log in to refresh your meal plan.");
+        return;
+      }
+
+      const profile = await getUserProfile(user.uid);
+      if (!profile || !profile.height || !profile.weight) {
+        setRefreshError("Please complete your profile (height and weight) to refresh recommendations.");
+        return;
+      }
+
+      const records = await getWeeklyTracking(user.uid);
+      const checkInStatus = await getLatestCheckInStatus(user.uid);
+      const todayCheckin = checkInStatus.isTracked ? checkInStatus.latestRecord : null;
+      const nextPlanIndex = planIndex + 1;
+
+      const currentMeals = userMode?.nutrition
+        ? Object.values(userMode.nutrition)
+            .map((p) => (typeof p === "object" ? p?.meal : p))
+            .filter(Boolean)
+        : [];
+
+      const response = await fetchBackend("/nutrition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          age: Number(profile.age) || 25,
+          gender: profile.gender || "male",
+          height_cm: Number(profile.height),
+          weight_kg: Number(profile.weight),
+          activity_level: profile.activityLevel || "moderate",
+          goal: profile.goal || "maintenance",
+          diet_type: profile.dietPreference || profile.diet_type || "mixed",
+          today_checkin: todayCheckin,
+          recent_history: records || [],
+          refresh: true,
+          plan_index: nextPlanIndex,
+          current_meals: currentMeals,
+        }),
+      });
+
+      const res = await response.json();
+      if (!response.ok || res.status !== "success") {
+        throw new Error(res.message || "Unable to refresh meal plan.");
+      }
+
+      if (res.meal_plan) {
+        setPlanIndex(nextPlanIndex);
+        setLocalRecommendations((prev) => {
+          if (!prev) return { nutrition: res.meal_plan };
+          return {
+            ...prev,
+            nutrition: res.meal_plan,
+          };
+        });
+      }
+    } catch (err) {
+      console.error("Refresh meal plan error:", err);
+      setRefreshError(err.message || "Failed to refresh meal plan.");
+    } finally {
+      setRefreshingPlan(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {!isArray && userMode && (
@@ -192,7 +266,21 @@ function Recommendation({ actions, externalLoading, externalError }) {
 
       {!isArray && userMode?.nutrition && (
         <div className="bg-white rounded-2xl shadow-card p-6 border border-gray-100 mt-6">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><span>🍎</span> Personalized Nutrition</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold flex items-center gap-2"><span>🍎</span> Personalized Nutrition</h2>
+            <button
+              onClick={refreshNutritionPlan}
+              disabled={refreshingPlan}
+              className="px-3.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <span>🔄</span> {refreshingPlan ? "Updating..." : "Refresh Plan"}
+            </button>
+          </div>
+          {refreshError && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-xl text-xs border border-red-200">
+              {refreshError}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Object.entries(userMode.nutrition).map(([meal, plan]) => (
               <div key={meal} className="bg-orange-50 rounded-xl p-4 shadow-sm border border-orange-100">

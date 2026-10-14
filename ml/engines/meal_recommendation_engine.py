@@ -220,10 +220,12 @@ def score_meal_candidate(meal_row, slot_target, goal, activity_level, chosen_ing
 # =========================================================================
 # RECOMMEND COMPLETE DAILY MEAL PLAN
 # =========================================================================
-def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=None, today_checkin=None):
+def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=None, today_checkin=None, plan_index=0, exclude_meals=None):
     """
     Generates a personalized 4-meal daily nutrition plan using the curated
     Indian meal dataset, user profile, check-in data, and nutritional targets.
+    Supports plan_index and exclude_meals to generate alternative valid plans
+    on Refresh Plan requests while preserving nutrition constraints.
     """
     df = load_meals_dataset()
     diet_pref = user_profile.get("dietPreference") or user_profile.get("diet_type") or "mixed"
@@ -252,6 +254,13 @@ def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=No
                     if s in mp and isinstance(mp[s], dict):
                         recent_meal_names.append(mp[s].get("meal", ""))
 
+    exclude_set = set()
+    if exclude_meals:
+        if isinstance(exclude_meals, (list, tuple, set)):
+            exclude_set = {str(m).strip().lower() for m in exclude_meals if m}
+        elif isinstance(exclude_meals, str):
+            exclude_set = {exclude_meals.strip().lower()}
+
     slot_targets = get_slot_targets(daily_calories, daily_macros, goal)
     chosen_plan = {}
     chosen_ingredients = set()
@@ -279,8 +288,25 @@ def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=No
             axis=1
         )
 
+        if exclude_set:
+            candidates["is_excluded"] = candidates["meal_name"].apply(
+                lambda name: any(ex in str(name).lower() or str(name).lower() in ex for ex in exclude_set)
+            )
+            candidates.loc[candidates["is_excluded"], "match_score"] -= 100
+
         candidates = candidates.sort_values(by="match_score", ascending=False)
-        best_meal = candidates.iloc[0].to_dict()
+
+        # Prefer candidates not in the excluded list
+        non_excluded = candidates[~candidates["is_excluded"]] if "is_excluded" in candidates else candidates
+        pool = non_excluded if not non_excluded.empty else candidates
+
+        viable_pool = pool[pool["match_score"] > 0]
+        if viable_pool.empty:
+            viable_pool = pool
+
+        # Rotate through top candidates using plan_index
+        idx = int(plan_index or 0) % len(viable_pool)
+        best_meal = viable_pool.iloc[idx].to_dict()
 
         # Track chosen main ingredients
         name_lower = str(best_meal["meal_name"]).lower()
@@ -403,5 +429,6 @@ def recommend_daily_meal_plan(user_profile, nutrition_targets, recent_history=No
         },
         "planned_totals": planned_totals,
         "summary": daily_summary,
-        "hydration": hydration_info
+        "hydration": hydration_info,
+        "plan_index": int(plan_index or 0)
     }

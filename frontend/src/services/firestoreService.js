@@ -98,6 +98,8 @@ export const getTimestampMillis = (ts) => {
  */
 export const isCheckInRecord = (record) => {
   if (!record || typeof record !== "object") return false;
+  // If all today's tasks/goals were ticked and completed
+  if (record.goalsCompleted === true) return true;
   // If explicitly flagged as check-in completed
   if (record.checkInCompleted === true || record.dailyCheckInCompleted === true) return true;
   // If it has recordedAt or completedAt timestamp (only saved by saveDailyTracking)
@@ -438,19 +440,6 @@ export const updateDailyGoals = async (uid, goals) => {
 
   const userRef = doc(db, "users", uid);
 
-  await updateDoc(userRef, {
-    dailyGoals: goals,
-    goalDate: date,
-  });
-
-  /*
-   * Store today's goal completion inside the
-   * date-based dailyTracking document.
-   *
-   * This allows the streak to be calculated from
-   * historical dates instead of one single streak number.
-   */
-
   const goalValues = Object.values(goals);
 
   const completedCount = goalValues.filter(
@@ -468,6 +457,23 @@ export const updateDailyGoals = async (uid, goals) => {
     totalGoals > 0 &&
     completedCount === totalGoals;
 
+  await setDoc(
+    userRef,
+    {
+      dailyGoals: goals,
+      goalDate: date,
+      todayCompleted: goalsCompleted,
+    },
+    { merge: true }
+  );
+
+  /*
+   * Store today's goal completion inside the
+   * date-based dailyTracking document.
+   *
+   * This allows the streak to be calculated from
+   * historical dates instead of one single streak number.
+   */
   const trackingRef = doc(
     db,
     "users",
@@ -476,14 +482,20 @@ export const updateDailyGoals = async (uid, goals) => {
     date
   );
 
+  const trackingPayload = {
+    date,
+    goalCompletion: goals,
+    goalCompletionPercent: completionPercent,
+    goalsCompleted,
+  };
+
+  if (goalsCompleted) {
+    trackingPayload.completedAtMillis = Date.now();
+  }
+
   await setDoc(
     trackingRef,
-    {
-      date,
-      goalCompletion: goals,
-      goalCompletionPercent: completionPercent,
-      goalsCompleted,
-    },
+    trackingPayload,
     {
       merge: true,
     }
@@ -513,109 +525,148 @@ export const updateTodayCompletion = async (
 
 
 /* =========================================================
+   RECORD DATE EXTRACTION
+   ========================================================= */
+
+export const extractRecordDateKey = (record) => {
+  if (!record || typeof record !== "object") return null;
+
+  // 1. Explicit date string matching YYYY-MM-DD
+  if (typeof record.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(record.date.trim())) {
+    return record.date.trim();
+  }
+
+  // 2. Document id matching YYYY-MM-DD
+  if (typeof record.id === "string" && /^\d{4}-\d{2}-\d{2}$/.test(record.id.trim())) {
+    return record.id.trim();
+  }
+
+  // 3. Fallback to completed/recorded timestamp in user's local timezone
+  const rawTs =
+    record.completedAt ||
+    record.recordedAt ||
+    record.completedAtMillis ||
+    record.timestamp ||
+    record.createdAt;
+
+  const millis = getTimestampMillis(rawTs);
+  if (millis) {
+    const d = new Date(millis);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  return null;
+};
+
+/* =========================================================
    STREAK CALCULATION
    ========================================================= */
 
-export const calculateStreakFromRecords = (
-  records
-) => {
-  if (!records || records.length === 0) {
+export const calculateStreakFromRecords = (records) => {
+  if (!records || !Array.isArray(records) || records.length === 0) {
     return {
       currentStreak: 0,
       bestStreak: 0,
     };
   }
 
-  const completedDates = new Set(
-    records
-      .filter((record) => record.checkInCompleted || record.dailyCheckInCompleted)
-      .map((record) => record.date)
-  );
+  // Filter only authentic check-in records; never count page views or empty daily goal updates
+  const checkInRecords = records.filter((record) => isCheckInRecord(record));
+  if (checkInRecords.length === 0) {
+    return {
+      currentStreak: 0,
+      bestStreak: 0,
+    };
+  }
 
-  const today = new Date();
+  // Count each calendar day only once using Set
+  const completedDates = new Set();
+  for (const record of checkInRecords) {
+    const dateKey = extractRecordDateKey(record);
+    if (dateKey) {
+      completedDates.add(dateKey);
+    }
+  }
+
+  if (completedDates.size === 0) {
+    return {
+      currentStreak: 0,
+      bestStreak: 0,
+    };
+  }
+
+  const now = new Date();
+  // Anchor to noon local time to prevent DST or midnight edge-case day boundary drift
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
 
   const formatDate = (date) => {
     const year = date.getFullYear();
-    const month = String(
-      date.getMonth() + 1
-    ).padStart(2, "0");
-    const day = String(
-      date.getDate()
-    ).padStart(2, "0");
-
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   };
 
-  /* -------------------------
-     CURRENT STREAK
-     ------------------------- */
+  const todayKey = formatDate(today);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = formatDate(yesterday);
 
   let currentStreak = 0;
-  const currentDate = new Date(today);
-  const todayKey = formatDate(currentDate);
 
-  // If today is not completed, check if yesterday was. A streak is still alive until yesterday is missed.
-  if (!completedDates.has(todayKey)) {
-    currentDate.setDate(currentDate.getDate() - 1);
-  }
-
-  while (true) {
-    const dateKey = formatDate(currentDate);
-
-    if (!completedDates.has(dateKey)) {
-      break;
+  // Streak rules:
+  // - If user has checked in today, count today as latest streak day.
+  // - If user has not checked in today but checked in yesterday, retain streak from yesterday.
+  // - If user missed an entire day (neither today nor yesterday), streak resets to 0.
+  // - First-ever check-in starts a streak of 1.
+  if (completedDates.has(todayKey)) {
+    const cursor = new Date(today);
+    while (completedDates.has(formatDate(cursor))) {
+      currentStreak++;
+      cursor.setDate(cursor.getDate() - 1);
     }
-
-    currentStreak++;
-
-    currentDate.setDate(
-      currentDate.getDate() - 1
-    );
+  } else if (completedDates.has(yesterdayKey)) {
+    const cursor = new Date(yesterday);
+    while (completedDates.has(formatDate(cursor))) {
+      currentStreak++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+  } else {
+    currentStreak = 0;
   }
 
-  /* -------------------------
-     BEST STREAK
-     ------------------------- */
-
-  const sortedDates = Array.from(
-    completedDates
-  ).sort();
-
+  // Best streak across entire valid history
+  const sortedDates = Array.from(completedDates).sort();
   let bestStreak = 0;
   let runningStreak = 0;
   let previousDate = null;
 
   sortedDates.forEach((dateString) => {
-    const currentDate = new Date(
-      `${dateString}T00:00:00`
-    );
+    const [y, m, d] = dateString.split("-").map(Number);
+    const currentDate = new Date(y, m - 1, d, 12, 0, 0);
 
     if (!previousDate) {
       runningStreak = 1;
     } else {
-      const difference =
-        Math.round(
-          (
-            currentDate -
-            previousDate
-          ) /
-            (1000 * 60 * 60 * 24)
-        );
+      const diffMs = currentDate.getTime() - previousDate.getTime();
+      const differenceDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
-      if (difference === 1) {
+      if (differenceDays === 1) {
         runningStreak++;
       } else {
         runningStreak = 1;
       }
     }
 
-    bestStreak = Math.max(
-      bestStreak,
-      runningStreak
-    );
-
+    bestStreak = Math.max(bestStreak, runningStreak);
     previousDate = currentDate;
   });
+
+  bestStreak = Math.max(bestStreak, currentStreak);
 
   return {
     currentStreak,
@@ -623,15 +674,21 @@ export const calculateStreakFromRecords = (
   };
 };
 
-
 /* =========================================================
    GET STREAK
    ========================================================= */
 
 export const getStreakData = async (uid) => {
-  const records = await getWeeklyTracking(uid);
-
-  return calculateStreakFromRecords(records);
+  if (!uid) {
+    return { currentStreak: 0, bestStreak: 0 };
+  }
+  try {
+    const records = await getWeeklyTracking(uid);
+    return calculateStreakFromRecords(records);
+  } catch (error) {
+    console.error("Error getting streak data from Firestore:", error);
+    return { currentStreak: 0, bestStreak: 0 };
+  }
 };
 
 

@@ -10,8 +10,10 @@ import {
   getWeeklyTracking,
   getLast7DaysTracking,
   getStreakData,
+  calculateStreakFromRecords,
   getLocalDateKey,
-  getLatestCheckInStatus
+  getLatestCheckInStatus,
+  updateStreak
 } from "../services/firestoreService";
 import { useLocation, useNavigate } from "react-router-dom";
 import { logout } from "../services/authService";
@@ -101,7 +103,7 @@ const [anomalyError, setAnomalyError] = useState(null);
 const [interpretationResult, setInterpretationResult] = useState(null);
 const [interpretationLoading, setInterpretationLoading] = useState(false);
 const [interpretationError, setInterpretationError] = useState(null);
-const [techModeEnabled, setTechModeEnabled] = useState(false);
+const [nutritionPlanIndex, setNutritionPlanIndex] = useState(0);
 const toggleGoal = async (goal) => {
   const user = auth.currentUser;
   if (!user) return;
@@ -123,6 +125,13 @@ const toggleGoal = async (goal) => {
 
     setStreak(streakData.currentStreak);
     setBestStreak(streakData.bestStreak);
+
+    // Keep user document streak in sync
+    await updateStreak(user.uid, streakData.currentStreak);
+
+    // Keep tracking records state in sync
+    const updatedRecords = await getWeeklyTracking(user.uid);
+    setTrackingRecords(updatedRecords);
 
   } catch (error) {
     console.error("Unable to save daily goal:", error);
@@ -151,9 +160,17 @@ const toggleGoal = async (goal) => {
     navigate(DASHBOARD_PAGE_ROUTES[page] || "/dashboard");
   };
 
-  const loadNutritionData = useCallback(async () => {
+  const loadNutritionData = useCallback(async (isRefresh = false) => {
     const user = auth.currentUser;
-    if (!user || !profile) return;
+    if (!user) return;
+    if (nutritionLoading) return; // Prevent duplicate requests
+
+    if (!profile || !profile.height || !profile.weight) {
+      setNutritionError(
+        "Please complete your profile (height and weight) to generate personalized nutrition recommendations."
+      );
+      return;
+    }
 
     try {
       setNutritionLoading(true);
@@ -163,6 +180,15 @@ const toggleGoal = async (goal) => {
       const checkInStatus = await getLatestCheckInStatus(user.uid);
       const todayCheckin = checkInStatus.isTracked ? checkInStatus.latestRecord : null;
 
+      const nextPlanIndex = isRefresh ? nutritionPlanIndex + 1 : nutritionPlanIndex;
+
+      // Extract currently displayed meal names so the engine selects alternative options
+      const currentMeals = nutritionData?.meal_plan
+        ? Object.values(nutritionData.meal_plan)
+            .filter((m) => m && typeof m === "object" && m.meal)
+            .map((m) => m.meal)
+        : [];
+
       const response = await fetchBackend(
         "/nutrition",
         {
@@ -171,15 +197,18 @@ const toggleGoal = async (goal) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            age: Number(profile.age),
-            gender: profile.gender,
+            age: Number(profile.age) || 25,
+            gender: profile.gender || "male",
             height_cm: Number(profile.height),
             weight_kg: Number(profile.weight),
             activity_level: profile.activityLevel || "moderate",
             goal: profile.goal || "maintenance",
-            diet_type: profile.dietPreference || "mixed",
+            diet_type: profile.dietPreference || profile.diet_type || "mixed",
             today_checkin: todayCheckin,
             recent_history: records || [],
+            refresh: isRefresh,
+            plan_index: nextPlanIndex,
+            current_meals: isRefresh ? currentMeals : [],
           }),
         }
       );
@@ -195,6 +224,9 @@ const toggleGoal = async (goal) => {
       console.log("E6 NUTRITION RESULT:", data);
 
       setNutritionData(data);
+      if (isRefresh) {
+        setNutritionPlanIndex(nextPlanIndex);
+      }
       setNutritionError("");
     } catch (error) {
       console.error("E6 Nutrition Error:", error);
@@ -205,9 +237,7 @@ const toggleGoal = async (goal) => {
     } finally {
       setNutritionLoading(false);
     }
-  }, [profile]);
-
-const healthScore = profile?.bodyAnalysis?.healthScore || 0;
+  }, [profile, nutritionLoading, nutritionPlanIndex, nutritionData]);
 
   useEffect(() => {
 
@@ -259,6 +289,15 @@ const healthScore = profile?.bodyAnalysis?.healthScore || 0;
     setTrackingRecords(trackingRecords);
     console.log("FIS TRACKING RECORDS:", trackingRecords);
     console.log("ACTIVE 24H CHECK-IN RECORD:", trackingData, "IS ACTIVE:", isCheckInActive);
+
+    // Immediately calculate streak from authenticated user's actual check-in records
+    try {
+      const streakData = calculateStreakFromRecords(trackingRecords);
+      setStreak(streakData.currentStreak);
+      setBestStreak(streakData.bestStreak);
+    } catch (streakErr) {
+      console.error("Streak calculation error in fetchProfile:", streakErr);
+    }
 
     // Chronologically sort all valid check-in records to extract latest and previous check-ins
     const getRecordMillis = (r) => {
@@ -1394,7 +1433,7 @@ useEffect(() => {
           </button>
         )}
         <button
-          onClick={loadNutritionData}
+          onClick={() => loadNutritionData(true)}
           disabled={nutritionLoading}
           className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
         >
@@ -2025,19 +2064,6 @@ useEffect(() => {
             Detailed habit analysis, multi-engine connections, and prioritized action plans.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-            techModeEnabled ? "bg-gray-800 text-white" : "bg-orange-100 text-primary"
-          }`}>
-            {techModeEnabled ? "🔬 Technical Mode" : "👤 Standard View"}
-          </span>
-          <button
-            onClick={() => setTechModeEnabled(prev => !prev)}
-            className="bg-white border border-gray-200 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-orange-50 transition shadow-sm"
-          >
-            Switch to {techModeEnabled ? "Standard" : "Technical"} Mode
-          </button>
-        </div>
       </div>
 
       {(analyticsError || behaviorError || predictionError || cohortError || anomalyError) && (
@@ -2101,7 +2127,6 @@ useEffect(() => {
 
       {interpretationResult && !interpretationLoading && (() => {
         const um = interpretationResult.user_mode || {};
-        const tm = interpretationResult.technical_mode || {};
         const source = interpretationResult.source || "analytics_interpretation_engine";
         const isLLM = source === "llm";
 
@@ -2284,40 +2309,8 @@ useEffect(() => {
                           </div>
                         )}
 
-                        {/* Technical mode overlay */}
-                        {techModeEnabled && tm[`engine_${i + 1}`] && (
-                          <div className="mt-3 bg-gray-900 text-green-300 rounded-xl p-4 font-mono text-xs space-y-2">
-                            <p className="text-green-400 font-bold">[ Technical / Viva Mode ]</p>
-                            {Object.entries(tm[`engine_${i + 1}`]).map(([k, v]) => (
-                              <div key={k}>
-                                <span className="text-gray-400">{k}: </span>
-                                <span>{String(v)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </details>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Full Technical Mode Panel */}
-            {techModeEnabled && Object.keys(tm).length > 0 && (
-              <div className="bg-gray-900 text-green-300 rounded-2xl p-6 font-mono text-xs">
-                <p className="text-green-400 font-bold text-sm mb-4">🔬 Full Technical / Viva Mode — All Engines</p>
-                <div className="space-y-4">
-                  {Object.entries(tm).map(([key, engine]) => (
-                    <div key={key} className="border border-gray-700 rounded-xl p-4">
-                      <p className="text-yellow-300 font-bold mb-2">{engine.name || key}</p>
-                      {Object.entries(engine).filter(([k]) => k !== "name").map(([k, v]) => (
-                        <div key={k} className="mb-1">
-                          <span className="text-gray-400">{k}: </span>
-                          <span>{String(v)}</span>
-                        </div>
-                      ))}
-                    </div>
                   ))}
                 </div>
               </div>

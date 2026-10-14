@@ -463,12 +463,17 @@ def nutrition_analysis():
         result = analyze_nutrition(data)
 
         if result.get("status") == "success":
+            plan_index = int(data.get("plan_index", 0))
+            exclude_meals = data.get("current_meals") or data.get("exclude_meals") or []
+
             # 2. Curated Indian meal plan using meal recommendation engine
             plan_result = recommend_daily_meal_plan(
                 data,
                 result.get("targets", {}),
                 data.get("recent_history"),
-                data.get("today_checkin")
+                data.get("today_checkin"),
+                plan_index=plan_index,
+                exclude_meals=exclude_meals
             )
 
             # 3. Enrich meal plan descriptions with LLM / smart coaching notes
@@ -478,6 +483,7 @@ def nutrition_analysis():
             result["planned_totals"] = plan_result.get("planned_totals", {})
             result["summary"] = plan_result.get("summary", {})
             result["hydration"] = plan_result.get("hydration", {})
+            result["plan_index"] = plan_index
 
         return jsonify(result), 200
 
